@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --surface: #0a0a0a;
+    --surface-50: #141414;
+    --surface-100: #1a1a1a;
+    --surface-200: #222222;
+    --surface-300: #2a2a2a;
+    --surface-400: #333333;
+    --accent: #00ff88;
+    --accent-dim: rgba(0, 255, 136, 0.15);
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.6);
+    --text-muted: rgba(255, 255, 255, 0.35);
+    --border: rgba(255, 255, 255, 0.07);
+    --border-hover: rgba(255, 255, 255, 0.12);
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--surface);
+    color: var(--text-primary);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+}
+
+@layer components {
+  .glass {
+    @apply backdrop-blur-md bg-white/[0.06] border border-white/[0.08];
+  }
+
+  .panel {
+    @apply bg-[#141414] border border-white/[0.07];
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 rounded-lg bg-accent text-black font-semibold text-sm
+      hover:bg-accent/90 active:scale-95 transition-all duration-150;
+  }
+
+  .btn-ghost {
+    @apply px-3 py-1.5 rounded-md text-white/60 text-sm hover:text-white
+      hover:bg-white/[0.06] active:bg-white/10 transition-all duration-150;
+  }
+
+  .label {
+    @apply text-[10px] font-medium text-white/40 uppercase tracking-widest;
+  }
+}
