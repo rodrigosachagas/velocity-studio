@@ -1,4 +1,5 @@
 import { useRef, useCallback } from "react"
+import { useVideoImport } from "@/hooks/useVideoImport"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   DndContext,
@@ -94,25 +95,33 @@ export function CanvasArea() {
 }
 
 function DropZone() {
-  const createProject = useProjectStore((s) => s.createProject)
-  const setView = useAppStore((s) => s.setView)
+  const { openFilePicker, importFromDrop, isImporting } = useVideoImport()
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    if (e.dataTransfer.files.length > 0) await importFromDrop(e.dataTransfer.files)
+  }, [importFromDrop])
 
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }}
       animate={{ opacity: 1, scale: 1 }}
       className="flex flex-col items-center gap-4 p-12 rounded-2xl border-2 border-dashed border-white/[0.1] hover:border-accent/40 transition-colors cursor-pointer group"
-      onClick={() => {
-        createProject()
-        setView("editor")
-      }}
+      onClick={openFilePicker}
+      onDrop={handleDrop}
+      onDragOver={(e) => e.preventDefault()}
     >
       <div className="w-14 h-14 rounded-2xl bg-white/[0.05] flex items-center justify-center group-hover:bg-accent/10 transition-colors">
-        <Icon name="upload" size={24} className="text-white/30 group-hover:text-accent transition-colors" />
+        {isImporting
+          ? <div className="w-6 h-6 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+          : <Icon name="upload" size={24} className="text-white/30 group-hover:text-accent transition-colors" />
+        }
       </div>
       <div className="text-center">
-        <div className="text-white/60 font-medium text-sm">Drop your video here</div>
-        <div className="text-white/30 text-xs mt-1">or click to browse • MP4, MOV</div>
+        <div className="text-white/60 font-medium text-sm">
+          {isImporting ? "Importando..." : "Arraste seu vídeo aqui"}
+        </div>
+        <div className="text-white/30 text-xs mt-1">ou clique para escolher · MP4 · MOV</div>
       </div>
     </motion.div>
   )

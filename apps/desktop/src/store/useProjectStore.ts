@@ -5,6 +5,8 @@ import { nanoid } from "@velocity/shared"
 
 interface ProjectStore {
   project: Project | null
+  /** Blob URL for browser-loaded video (not persisted) */
+  videoBlobUrl: string | null
   isDirty: boolean
   selectedWidgetIds: string[]
 
@@ -48,6 +50,7 @@ export const useProjectStore = create<ProjectStore>()(
   devtools(
     subscribeWithSelector((set, get) => ({
       project: null,
+      videoBlobUrl: null,
       isDirty: false,
       selectedWidgetIds: [],
 
@@ -83,6 +86,7 @@ export const useProjectStore = create<ProjectStore>()(
                 timeline: { ...s.project.timeline, duration: video.metadata.duration },
               }
             : null,
+          videoBlobUrl: video.blobUrl ?? null,
           isDirty: true,
         }))
       },

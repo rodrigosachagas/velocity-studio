@@ -21,6 +21,8 @@ export const VideoFileSchema = z.object({
   metadata: VideoMetadataSchema,
   thumbnailPath: z.string().optional(),
   proxyPath: z.string().optional(),
+  /** In-memory blob URL from browser File API — not persisted to project JSON */
+  blobUrl: z.string().optional(),
 })
 
 export type VideoFile = z.infer<typeof VideoFileSchema>

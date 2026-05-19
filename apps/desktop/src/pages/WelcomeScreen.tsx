@@ -1,13 +1,21 @@
+import { useCallback } from "react"
 import { motion } from "framer-motion"
 import { useAppStore } from "@/store/useAppStore"
 import { useProjectStore } from "@/store/useProjectStore"
 import { ALL_TEMPLATES } from "@velocity/templates"
 import { Icon } from "@/components/ui/Icon"
+import { useVideoImport } from "@/hooks/useVideoImport"
 
 export function WelcomeScreen() {
   const setView = useAppStore((s) => s.setView)
   const createProject = useProjectStore((s) => s.createProject)
   const applyTemplate = useProjectStore((s) => s.applyTemplate)
+  const { openFilePicker, importFromDrop } = useVideoImport()
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    if (e.dataTransfer.files.length > 0) await importFromDrop(e.dataTransfer.files)
+  }, [importFromDrop])
 
   const handleNewProject = () => {
     createProject()
@@ -23,7 +31,11 @@ export function WelcomeScreen() {
   }
 
   return (
-    <div className="h-full flex flex-col items-center justify-center bg-surface overflow-auto py-12">
+    <div
+      className="h-full flex flex-col items-center justify-center bg-surface overflow-auto py-12"
+      onDrop={handleDrop}
+      onDragOver={(e) => e.preventDefault()}
+    >
       {/* Logo */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -57,9 +69,12 @@ export function WelcomeScreen() {
           <Icon name="plus" size={16} />
           New Project
         </button>
-        <button className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/[0.06] text-white/70 font-medium text-sm hover:bg-white/[0.1] hover:text-white active:scale-95 transition-all border border-white/[0.08]">
-          <Icon name="folder" size={16} />
-          Open Project
+        <button
+          onClick={openFilePicker}
+          className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/[0.06] text-white/70 font-medium text-sm hover:bg-white/[0.1] hover:text-white active:scale-95 transition-all border border-white/[0.08]"
+        >
+          <Icon name="upload" size={16} />
+          Importar Vídeo
         </button>
       </motion.div>
 
