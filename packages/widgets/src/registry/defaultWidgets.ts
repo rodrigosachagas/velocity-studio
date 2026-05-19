@@ -1,27 +1,37 @@
 import { registerWidget } from "./widgetRegistry"
-import { Speedometer } from "../components/speedometer/Speedometer"
+import { Speedometer, SPEEDOMETER_VARIANTS } from "../components/speedometer/Speedometer"
 import { Compass } from "../components/compass/Compass"
 import { Altitude } from "../components/altitude/Altitude"
 import { GForce } from "../components/g-force/GForce"
 import { Timer } from "../components/timer/Timer"
 
 export function registerDefaultWidgets(): void {
-  registerWidget({
-    meta: {
-      type: "speedometer",
-      label: "Speedometer",
-      description: "Circular speedometer with animated needle",
-      defaultSize: { width: 160, height: 160 },
-      defaultConfig: {
-        width: 160,
-        height: 160,
-        style: { theme: "dark", accentColor: "#00ff88" },
+  // Register each speedometer variant as a distinct widget entry
+  for (const v of SPEEDOMETER_VARIANTS) {
+    const isWide = v.id === "hud" || v.id === "digital"
+    const isTall = v.id === "bars" || v.id === "tape"
+    const defaultW = isWide ? 260 : isTall ? 80 : 160
+    const defaultH = isWide ? 80 : isTall ? 180 : 160
+
+    registerWidget({
+      meta: {
+        type: "speedometer",
+        label: `Speed · ${v.label}`,
+        description: v.description,
+        defaultSize: { width: defaultW, height: defaultH },
+        defaultConfig: {
+          width: defaultW,
+          height: defaultH,
+          style: { theme: "dark", accentColor: "#00ff88" },
+          props: { variant: v.id },
+        },
+        icon: "gauge",
+        category: "telemetry",
+        variantId: v.id,
       },
-      icon: "gauge",
-      category: "telemetry",
-    },
-    Component: Speedometer,
-  })
+      Component: Speedometer,
+    })
+  }
 
   registerWidget({
     meta: {

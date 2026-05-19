@@ -1,4 +1,5 @@
-export { Speedometer } from "./components/speedometer/Speedometer"
+export { Speedometer, SPEEDOMETER_VARIANTS } from "./components/speedometer/Speedometer"
+export type { SpeedometerProps, SpeedometerVariant } from "./components/speedometer/types"
 export { Compass } from "./components/compass/Compass"
 export { Altitude } from "./components/altitude/Altitude"
 export { GForce } from "./components/g-force/GForce"

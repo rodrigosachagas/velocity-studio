@@ -9,6 +9,7 @@ export interface WidgetMeta {
   defaultConfig: Partial<WidgetConfig>
   icon: string
   category: "telemetry" | "navigation" | "timing" | "media"
+  variantId?: string
 }
 
 export interface WidgetRenderer {
@@ -17,14 +18,19 @@ export interface WidgetRenderer {
   Component: ComponentType<any>
 }
 
-const registry = new Map<WidgetType, WidgetRenderer>()
+// Key = type + (variantId or "")
+const registry = new Map<string, WidgetRenderer>()
 
-export function registerWidget(renderer: WidgetRenderer): void {
-  registry.set(renderer.meta.type, renderer)
+function registryKey(type: WidgetType, variantId?: string) {
+  return variantId ? `${type}:${variantId}` : type
 }
 
-export function getWidget(type: WidgetType): WidgetRenderer | undefined {
-  return registry.get(type)
+export function registerWidget(renderer: WidgetRenderer): void {
+  registry.set(registryKey(renderer.meta.type, renderer.meta.variantId), renderer)
+}
+
+export function getWidget(type: WidgetType, variantId?: string): WidgetRenderer | undefined {
+  return registry.get(registryKey(type, variantId)) ?? registry.get(type)
 }
 
 export function getAllWidgets(): WidgetRenderer[] {

@@ -62,7 +62,8 @@ function DraggableWidget({
     disabled: widget.locked,
   })
 
-  const renderer = getWidget(widget.type)
+  const variantId = typeof widget.props?.variant === "string" ? widget.props.variant : undefined
+  const renderer = getWidget(widget.type, variantId)
   if (!renderer) return null
 
   const { Component } = renderer

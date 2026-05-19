@@ -1,5 +1,6 @@
 import { useProjectStore } from "@/store/useProjectStore"
 import { Icon } from "@/components/ui/Icon"
+import { SpeedometerInspector } from "./SpeedometerInspector"
 import type { WidgetConfig } from "@velocity/shared"
 
 export function RightPanel() {
@@ -58,10 +59,18 @@ export function RightPanel() {
       </div>
 
       <div className="p-3 space-y-4">
+        {selectedWidget.type === "speedometer" && (
+          <>
+            <SpeedometerInspector widget={selectedWidget} />
+            <div className="h-px bg-white/[0.06]" />
+          </>
+        )}
         <PositionSection widget={selectedWidget} onUpdate={updateWidget} />
         <SizeSection widget={selectedWidget} onUpdate={updateWidget} />
         <AppearanceSection widget={selectedWidget} onUpdate={updateWidget} />
-        <StyleSection widget={selectedWidget} onUpdate={updateWidget} />
+        {selectedWidget.type !== "speedometer" && (
+          <StyleSection widget={selectedWidget} onUpdate={updateWidget} />
+        )}
       </div>
     </div>
   )
