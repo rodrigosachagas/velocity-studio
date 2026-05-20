@@ -21,6 +21,8 @@ export function WidgetCanvas() {
   const setPickingStartFinish = useAppStore((s) => s.setPickingStartFinish)
   const telemetry = project?.telemetry
   const startFinishLine = project?.startFinishLine
+  const inPoint = project?.timeline.inPoint
+  const outPoint = project?.timeline.outPoint
 
   if (!project) return null
 
@@ -54,6 +56,8 @@ export function WidgetCanvas() {
               scaleX={scaleX}
               scaleY={scaleY}
               startFinishLine={startFinishLine}
+              inPoint={inPoint}
+              outPoint={outPoint}
               onSetStartFinish={
                 isPickingStartFinish && widget.type === "circuit-map"
                   ? handleSetStartFinish
@@ -80,6 +84,8 @@ interface DraggableWidgetProps {
   startFinishLine?: { lat: number; lon: number }
   onSetStartFinish?: (lat: number, lon: number) => void
   disableDrag?: boolean
+  inPoint?: number
+  outPoint?: number
   telemetry: ReturnType<typeof useProjectStore.getState>["project"] extends infer P
     ? P extends { telemetry?: infer T }
       ? T
@@ -100,6 +106,8 @@ function DraggableWidget({
   startFinishLine,
   onSetStartFinish,
   disableDrag = false,
+  inPoint,
+  outPoint,
 }: DraggableWidgetProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: widget.id,
@@ -145,7 +153,7 @@ function DraggableWidget({
       {...attributes}
     >
       <Component
-        {...extractWidgetProps(widget, currentTime, telemetry, startFinishLine)}
+        {...extractWidgetProps(widget, currentTime, telemetry, startFinishLine, inPoint, outPoint)}
         width={displayW}
         height={displayH}
         size={Math.min(displayW, displayH)}
@@ -186,13 +194,27 @@ function extractWidgetProps(
   currentTime: number,
   telemetry: { frames: { timestamp: number; speed?: number; altitude?: number; latitude?: number; longitude?: number; heading?: number; gForce?: number; acceleration?: { x: number; y: number; z: number } }[] } | undefined,
   startFinishLine?: { lat: number; lon: number },
+  inPoint?: number,
+  outPoint?: number,
 ) {
   const { style, props = {} } = widget
   const theme = style?.theme ?? "dark"
   const accentColor = style?.accentColor ?? "#00ff88"
 
-  const frame = telemetry
-    ? interpolateTelemetryAt(telemetry.frames, currentTime * 1000)
+  // Filter telemetry frames to the active trim window so lap detection and
+  // map traces only consider what the user chose to keep in the export.
+  const allFrames = telemetry?.frames
+  const trimmedFrames = allFrames && (inPoint != null || outPoint != null)
+    ? allFrames.filter((f) => {
+        const tMs = f.timestamp
+        const start = (inPoint ?? 0) * 1000
+        const end = (outPoint ?? Infinity) * 1000
+        return tMs >= start && tMs <= end
+      })
+    : allFrames
+
+  const frame = trimmedFrames
+    ? interpolateTelemetryAt(trimmedFrames, currentTime * 1000)
     : null
 
   return {
@@ -205,7 +227,7 @@ function extractWidgetProps(
     heading: frame?.heading,
     gForce: frame?.gForce,
     acceleration: frame?.acceleration,
-    frames: telemetry?.frames,
+    frames: trimmedFrames,
     currentTime,
     startFinishLine,
     ...props,

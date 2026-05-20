@@ -67,7 +67,7 @@ export function TimelinePanel() {
   // ── zoom centered on playhead ───────────────────────────────────────────────
   const applyZoom = useCallback(
     (newZoom: number) => {
-      const clamped = Math.max(1, Math.min(8, newZoom))
+      const clamped = Math.max(0.1, Math.min(8, newZoom))
       setZoom(clamped)
       const newVisible = duration / clamped
       const newMax = Math.max(0, duration - newVisible)
@@ -98,7 +98,7 @@ export function TimelinePanel() {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const factor = e.deltaY > 0 ? 0.82 : 1.22
-      applyZoom(zoom * factor)
+      applyZoom(Math.max(0.1, Math.min(8, zoom * factor)))
     }
     el.addEventListener("wheel", onWheel, { passive: false })
     return () => el.removeEventListener("wheel", onWheel)
@@ -162,7 +162,9 @@ export function TimelinePanel() {
   const outFrac = outPoint != null ? timeToFrac(outPoint) : null
   const hasTrim = inPoint != null || outPoint != null
 
-  const zoomLabel = zoom === 1 ? "1×" : `${zoom.toFixed(zoom < 2 ? 1 : 0)}×`
+  const zoomLabel = zoom === 1 ? "1×" : zoom < 1
+    ? `${zoom.toFixed(1)}×`
+    : `${zoom.toFixed(zoom < 2 ? 1 : 0)}×`
 
   return (
     <div className="flex flex-col h-full bg-surface-50">
@@ -235,7 +237,7 @@ export function TimelinePanel() {
 
         {/* Zoom */}
         <div className="flex items-center gap-0.5">
-          <button onClick={() => applyZoom(zoom / 1.5)} className="btn-ghost p-1" title="Zoom out (scroll ↓)">
+          <button onClick={() => applyZoom(zoom / 1.5)} className="btn-ghost p-1" title="Zoom out (scroll ↓ / botão)">
             <Icon name="minus" size={12} />
           </button>
           <span className="text-[10px] text-white/35 tabular-nums font-mono w-7 text-center">{zoomLabel}</span>
