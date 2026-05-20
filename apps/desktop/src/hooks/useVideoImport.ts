@@ -301,27 +301,53 @@ export function useVideoImport() {
     return importFromFile(videoFile)
   }, [importFromPath, importFromFile, importSegments])
 
-  /** Open native picker (Tauri) or browser file picker */
+  /** Open native picker (Tauri) or browser file picker — supports 1 or many files */
   const openFilePicker = useCallback(async (): Promise<VideoFile | null> => {
     if (isTauri()) {
       try {
         const { open } = await import("@tauri-apps/plugin-dialog")
         const selected = await open({
-          multiple: false,
+          multiple: true,
           filters: [{ name: "Video", extensions: ["mp4", "mov"] }],
         })
-        if (selected && typeof selected === "string") return importFromPath(selected)
+        if (!selected) return null
+        const paths = Array.isArray(selected) ? selected : [selected]
+        if (paths.length === 0) return null
+        if (paths.length === 1) {
+          return importFromPath(paths[0] as string)
+        }
+        // Multiple files → segment mode (replace any existing)
+        const fakeFiles = paths.map((p) => ({
+          name: (p as string).split("/").pop() ?? (p as string),
+          path: p,
+        })) as unknown as File[]
+        await importSegments(fakeFiles, true)
+        return null
       } catch (err) {
         console.error("Tauri file picker error:", err)
       }
       return null
     }
 
-    // Browser fallback
-    const file = await openBrowserFilePicker("video/mp4,video/quicktime,.mp4,.mov")
-    if (file) return importFromFile(file)
-    return null
-  }, [importFromPath, importFromFile])
+    // Browser fallback — use multi-file input
+    return new Promise<VideoFile | null>((resolve) => {
+      const input = document.createElement("input")
+      input.type = "file"
+      input.multiple = true
+      input.accept = "video/mp4,video/quicktime,.mp4,.mov"
+      input.onchange = async () => {
+        const files = Array.from(input.files ?? [])
+        if (files.length === 0) { resolve(null); return }
+        if (files.length === 1) {
+          resolve(await importFromFile(files[0]!))
+        } else {
+          await importSegments(files, true)
+          resolve(null)
+        }
+      }
+      input.click()
+    })
+  }, [importFromPath, importFromFile, importSegments])
 
   /** Open picker for multiple files (segment import) */
   const openSegmentsPicker = useCallback(async (): Promise<void> => {
