@@ -17,7 +17,7 @@ const SIM_PROFILES: { id: SimulationProfile; label: string; icon: string }[] = [
 ]
 
 export function VideoImportPanel() {
-  const { isImporting, error, progress, openFilePicker, importFromDrop, openSegmentsPicker } = useVideoImport()
+  const { isImporting, error, progress, openFilePicker, importFromDrop, importSegments, openSegmentsPicker } = useVideoImport()
   const { isExtracting, progress: telProgress, error: telError, extract, extractFromGPX, simulate } = useTelemetryExtraction()
   const project = useProjectStore((s) => s.project)
   const removeSegment = useProjectStore((s) => s.removeSegment)
@@ -51,12 +51,32 @@ export function VideoImportPanel() {
   const formatDuration = (secs: number) =>
     `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, "0")}`
 
+  // Drop handler available in both empty and video-loaded states
+  const handleDropOnPanel = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+    const files = Array.from(e.dataTransfer.files).filter(
+      (f) => /\.(mp4|mov)$/i.test(f.name) || f.type.startsWith("video/"),
+    )
+    if (files.length === 0) return
+    if (files.length === 1 && !isMultiSeg) {
+      await importFromDrop(e.dataTransfer.files)
+    } else {
+      // Multiple files, or adding to existing session → segment mode (append)
+      await importSegments(files, !isMultiSeg)
+    }
+  }, [importFromDrop, importSegments, isMultiSeg])
+
   if (video) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
+        onDrop={handleDropOnPanel}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
         className="p-3 space-y-2"
+        style={{ outline: isDragOver ? "2px dashed rgba(0,255,136,0.5)" : undefined, borderRadius: 12 }}
       >
         {/* Multi-segment list */}
         {isMultiSeg ? (
@@ -106,39 +126,49 @@ export function VideoImportPanel() {
           </div>
         ) : (
           /* Single-file video info */
-          <div className="p-3 rounded-xl bg-surface-200 border border-white/[0.08]">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-6 h-6 rounded bg-blue-accent/20 flex items-center justify-center shrink-0">
-                <Icon name="video" size={12} className="text-blue-accent" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-white/80 truncate">{video.name}</div>
-                <div className="text-[10px] text-white/35">
-                  {video.fps.toFixed(0)}fps · {video.width}×{video.height}
-                  {video.codec ? ` · ${video.codec.split("/").pop()?.toUpperCase()}` : ""}
+          <div className="space-y-1">
+            <div className="p-3 rounded-xl bg-surface-200 border border-white/[0.08]">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-6 h-6 rounded bg-blue-accent/20 flex items-center justify-center shrink-0">
+                  <Icon name="video" size={12} className="text-blue-accent" />
                 </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium text-white/80 truncate">{video.name}</div>
+                  <div className="text-[10px] text-white/35">
+                    {video.fps.toFixed(0)}fps · {video.width}×{video.height}
+                    {video.codec ? ` · ${video.codec.split("/").pop()?.toUpperCase()}` : ""}
+                  </div>
+                </div>
+                <button
+                  onClick={openFilePicker}
+                  className="p-1 rounded hover:bg-white/[0.07] text-white/30 hover:text-white/70 transition-colors shrink-0"
+                  title="Trocar vídeo"
+                >
+                  <Icon name="upload" size={12} />
+                </button>
               </div>
-              <button
-                onClick={openFilePicker}
-                className="p-1 rounded hover:bg-white/[0.07] text-white/30 hover:text-white/70 transition-colors shrink-0"
-                title="Trocar vídeo"
-              >
-                <Icon name="upload" size={12} />
-              </button>
-            </div>
-            <div className="flex gap-1 text-[10px]">
-              <span className="px-1.5 py-0.5 rounded bg-white/[0.05] text-white/35">
-                {formatDuration(video.duration)}
-              </span>
-              {video.size > 0 && (
+              <div className="flex gap-1 text-[10px]">
                 <span className="px-1.5 py-0.5 rounded bg-white/[0.05] text-white/35">
-                  {(video.size / 1024 / 1024).toFixed(0)} MB
+                  {formatDuration(video.duration)}
                 </span>
-              )}
-              {video.hasGPMF && (
-                <span className="px-1.5 py-0.5 rounded bg-accent/10 text-accent/70">GPMF</span>
-              )}
+                {video.size > 0 && (
+                  <span className="px-1.5 py-0.5 rounded bg-white/[0.05] text-white/35">
+                    {(video.size / 1024 / 1024).toFixed(0)} MB
+                  </span>
+                )}
+                {video.hasGPMF && (
+                  <span className="px-1.5 py-0.5 rounded bg-accent/10 text-accent/70">GPMF</span>
+                )}
+              </div>
             </div>
+            <button
+              onClick={openSegmentsPicker}
+              disabled={isImporting}
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] border border-dashed border-white/[0.1] text-white/30 hover:text-white/60 text-[10px] transition-all disabled:opacity-40"
+            >
+              <Icon name="plus" size={10} />
+              Adicionar mais arquivos (multi-segmento)
+            </button>
           </div>
         )}
 
