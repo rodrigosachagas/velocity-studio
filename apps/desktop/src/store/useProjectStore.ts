@@ -50,6 +50,7 @@ interface ProjectStore {
   setTimelineDuration: (duration: number) => void
   setStartFinishLine: (lat: number, lon: number) => void
   clearStartFinishLine: () => void
+  setTrimPoints: (inPoint: number | undefined, outPoint: number | undefined) => void
 }
 
 const defaultTimeline = () => ({
@@ -315,6 +316,14 @@ export const useProjectStore = create<ProjectStore>()(
       clearStartFinishLine: () =>
         set((s) => ({
           project: s.project ? { ...s.project, startFinishLine: undefined } : null,
+          isDirty: true,
+        })),
+
+      setTrimPoints: (inPoint, outPoint) =>
+        set((s) => ({
+          project: s.project
+            ? { ...s.project, timeline: { ...s.project.timeline, inPoint, outPoint } }
+            : null,
           isDirty: true,
         })),
     })),

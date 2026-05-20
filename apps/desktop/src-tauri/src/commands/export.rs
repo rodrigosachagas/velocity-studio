@@ -18,6 +18,10 @@ pub struct ExportOptions {
     pub crf: u8,
     /// Optional duration cap in seconds — used for test exports
     pub max_duration_seconds: Option<f64>,
+    /// Trim: start offset in seconds (input-side seek — fast)
+    pub trim_start: Option<f64>,
+    /// Trim: how many seconds to encode after trim_start
+    pub trim_duration: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -65,22 +69,31 @@ pub async fn render_video(
         None
     };
 
-    // Choose video input args: concat demuxer or single file
+    // Choose video input args: concat demuxer or single file, with optional trim seek
+    let trim_seek_args: Vec<String> = if let Some(ts) = options.trim_start {
+        if ts > 0.0 {
+            vec!["-ss".to_string(), format!("{:.6}", ts)]
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
     let (video_input_args, video_input_path): (Vec<String>, String) =
         if let Some(ref list) = concat_list_path {
-            (
-                vec![
-                    "-f".to_string(), "concat".to_string(),
-                    "-safe".to_string(), "0".to_string(),
-                    "-i".to_string(), list.clone(),
-                ],
-                list.clone(),
-            )
+            let mut args = trim_seek_args.clone();
+            args.extend([
+                "-f".to_string(), "concat".to_string(),
+                "-safe".to_string(), "0".to_string(),
+                "-i".to_string(), list.clone(),
+            ]);
+            (args, list.clone())
         } else {
-            (
-                vec!["-i".to_string(), options.input_path.clone()],
-                options.input_path.clone(),
-            )
+            let mut args = trim_seek_args.clone();
+            args.push("-i".to_string());
+            args.push(options.input_path.clone());
+            (args, options.input_path.clone())
         };
     let _ = video_input_path; // used indirectly via video_input_args
 
@@ -97,9 +110,15 @@ pub async fn render_video(
     let hw_maxrate_str = format!("{}k", hw_bitrate_kbps * 2);
     let hw_bufsize_str = format!("{}k", hw_bitrate_kbps * 4);
 
-    // Optional duration cap (-t flag) for test exports
-    let duration_args: Vec<String> = if let Some(max_secs) = options.max_duration_seconds {
-        vec!["-t".to_string(), format!("{:.3}", max_secs)]
+    // Duration cap: pick the shortest of trim_duration and max_duration_seconds
+    let effective_duration: Option<f64> = match (options.trim_duration, options.max_duration_seconds) {
+        (Some(td), Some(max)) => Some(td.min(max)),
+        (Some(td), None) => Some(td),
+        (None, Some(max)) => Some(max),
+        (None, None) => None,
+    };
+    let duration_args: Vec<String> = if let Some(d) = effective_duration {
+        vec!["-t".to_string(), format!("{:.6}", d)]
     } else {
         vec![]
     };

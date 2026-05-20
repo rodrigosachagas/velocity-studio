@@ -27,9 +27,15 @@ export function ExportModal({ onClose }: ExportModalProps) {
   const segments = [...(project.segments ?? [])].sort((a, b) => a.order - b.order)
   const isMultiSeg = segments.length > 1
 
+  const inPoint: number | undefined = project.timeline.inPoint
+  const outPoint: number | undefined = project.timeline.outPoint
+  const trimStart = inPoint ?? 0
+  const trimEnd = outPoint ?? video?.duration ?? 0
+  const hasTrim = inPoint != null || outPoint != null
+
   const handleExport = () => {
     if (!video) return
-    const maxDuration = testExport ? Math.max(1, video.duration * 0.05) : undefined
+    const maxDuration = testExport ? Math.max(1, (trimEnd - trimStart) * 0.05) : undefined
     startExport(overlayRef, setOverlayTime, {
       ...settings,
       videoPath: (isMultiSeg ? segments[0]?.path : undefined) ?? video.path,
@@ -39,6 +45,8 @@ export function ExportModal({ onClose }: ExportModalProps) {
       videoWidth: video.width,
       videoHeight: video.height,
       maxDuration,
+      trimStart: hasTrim && trimStart > 0 ? trimStart : undefined,
+      trimEnd: hasTrim && trimEnd < video.duration ? trimEnd : undefined,
     })
   }
 

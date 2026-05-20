@@ -41,6 +41,10 @@ export function useExport() {
       duration: number
       videoWidth: number
       videoHeight: number
+      /** Trim start in seconds — skips this many seconds from the beginning */
+      trimStart?: number
+      /** Trim end in seconds — export ends at this point in the global timeline */
+      trimEnd?: number
     }
   ) => {
     if (!isTauri()) {
@@ -80,9 +84,13 @@ export function useExport() {
       if (!outputPath) return
 
       const fps = options.fps
-      const effectiveDuration = options.maxDuration
-        ? Math.min(options.duration, options.maxDuration)
-        : options.duration
+      const trimStart = options.trimStart ?? 0
+      const trimEnd = options.trimEnd ?? options.duration
+      const trimmedDuration = trimEnd - trimStart
+      const baseDuration = options.maxDuration
+        ? Math.min(trimmedDuration, options.maxDuration)
+        : trimmedDuration
+      const effectiveDuration = baseDuration
       const totalFrames = Math.ceil(effectiveDuration * fps)
       setState({ phase: "rendering", currentFrame: 0, totalFrames, progress: 0, outputPath, error: null })
 
@@ -111,7 +119,7 @@ export function useExport() {
           return
         }
 
-        const time = i / fps
+        const time = trimStart + i / fps
 
         // Synchronous React re-render so widget props update before capture
         flushSync(() => setOverlayTime(time))
@@ -172,6 +180,8 @@ export function useExport() {
           codec: options.codec,
           crf: options.crf,
           max_duration_seconds: options.maxDuration ?? null,
+          trim_start: trimStart > 0 ? trimStart : null,
+          trim_duration: trimmedDuration < (options.duration) ? trimmedDuration : null,
         },
       })
 
