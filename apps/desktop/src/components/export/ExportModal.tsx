@@ -24,12 +24,16 @@ export function ExportModal({ onClose }: ExportModalProps) {
   const isDone = state.phase === "done"
   const isError = state.phase === "error"
 
+  const segments = [...(project.segments ?? [])].sort((a, b) => a.order - b.order)
+  const isMultiSeg = segments.length > 1
+
   const handleExport = () => {
     if (!video) return
     const maxDuration = testExport ? Math.max(1, video.duration * 0.05) : undefined
     startExport(overlayRef, setOverlayTime, {
       ...settings,
-      videoPath: video.path,
+      videoPath: (isMultiSeg ? segments[0]?.path : undefined) ?? video.path,
+      segmentPaths: isMultiSeg ? segments.map((s) => s.path) : undefined,
       fps: video.fps,
       duration: video.duration,
       videoWidth: video.width,

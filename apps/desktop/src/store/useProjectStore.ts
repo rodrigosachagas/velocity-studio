@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { subscribeWithSelector, devtools } from "zustand/middleware"
-import type { Project, VideoFile, TelemetryTrack, WidgetConfig, Template } from "@velocity/shared"
-import { nanoid } from "@velocity/shared"
+import type { Project, VideoFile, TelemetryTrack, WidgetConfig, Template, VideoSegment, VideoMetadata } from "@velocity/shared"
+import { nanoid, sortAndTimestampSegments, mergeSegmentTelemetries, totalSegmentsDuration } from "@velocity/shared"
 
 interface ProjectStore {
   project: Project | null
@@ -9,6 +9,11 @@ interface ProjectStore {
   videoBlobUrl: string | null
   isDirty: boolean
   selectedWidgetIds: string[]
+
+  /** Per-segment raw telemetry tracks — ephemeral, never persisted */
+  segmentTelemetries: Record<string, TelemetryTrack>
+  /** Per-segment playback URLs — ephemeral, never persisted */
+  segmentBlobUrls: Record<string, string>
 
   createProject: (name?: string) => void
   loadProject: (project: Project) => void
@@ -19,6 +24,17 @@ interface ProjectStore {
 
   setTelemetry: (track: TelemetryTrack) => void
   clearTelemetry: () => void
+
+  /** Add (or replace) segments. Sorts, assigns startGlobalTime, merges telemetry. */
+  addSegments: (
+    newSegs: VideoSegment[],
+    telemetries?: Record<string, TelemetryTrack>,
+    blobUrls?: Record<string, string>,
+    replace?: boolean,
+  ) => void
+  removeSegment: (id: string) => void
+  setSegmentTelemetry: (id: string, track: TelemetryTrack) => void
+  setSegmentBlobUrl: (id: string, url: string) => void
 
   addWidget: (config: Omit<WidgetConfig, "id">) => WidgetConfig
   updateWidget: (id: string, updates: Partial<WidgetConfig>) => void
@@ -55,6 +71,8 @@ export const useProjectStore = create<ProjectStore>()(
       videoBlobUrl: null,
       isDirty: false,
       selectedWidgetIds: [],
+      segmentTelemetries: {},
+      segmentBlobUrls: {},
 
       createProject: (name = "Untitled Project") => {
         const project: Project = {
@@ -111,6 +129,89 @@ export const useProjectStore = create<ProjectStore>()(
           project: s.project ? { ...s.project, telemetry: undefined } : null,
           isDirty: true,
         })),
+
+      addSegments: (newSegs, telemetries = {}, blobUrls = {}, replace = false) =>
+        set((s) => {
+          if (!s.project) return {}
+          const existing = replace ? [] : (s.project.segments ?? [])
+          const existingIds = new Set(existing.map((seg) => seg.id))
+          const merged = [...existing, ...newSegs.filter((seg) => !existingIds.has(seg.id))]
+          const sorted = sortAndTimestampSegments(merged)
+          const allTelemetries = replace
+            ? telemetries
+            : { ...s.segmentTelemetries, ...telemetries }
+          const mergedTrack = mergeSegmentTelemetries(sorted, allTelemetries)
+          const totalDuration = totalSegmentsDuration(sorted)
+          const firstSeg = sorted[0]
+          const video: VideoMetadata | undefined = firstSeg
+            ? {
+                id: firstSeg.id,
+                path: firstSeg.path,
+                name: sorted.map((seg) => seg.name).join(", "),
+                size: sorted.reduce((sum, seg) => sum + seg.size, 0),
+                duration: totalDuration,
+                fps: firstSeg.fps,
+                width: firstSeg.width,
+                height: firstSeg.height,
+                codec: firstSeg.codec,
+                hasGPMF: sorted.some((seg) => seg.hasGPMF),
+              }
+            : undefined
+          return {
+            project: {
+              ...s.project,
+              segments: sorted,
+              video,
+              telemetry: mergedTrack ?? s.project.telemetry,
+              timeline: { ...s.project.timeline, duration: totalDuration },
+            },
+            segmentTelemetries: allTelemetries,
+            segmentBlobUrls: replace ? blobUrls : { ...s.segmentBlobUrls, ...blobUrls },
+            videoBlobUrl: null,
+            isDirty: true,
+          }
+        }),
+
+      removeSegment: (id) =>
+        set((s) => {
+          if (!s.project) return {}
+          const remaining = (s.project.segments ?? []).filter((seg) => seg.id !== id)
+          const sorted = sortAndTimestampSegments(remaining)
+          const newTelemetries = { ...s.segmentTelemetries }
+          const newBlobUrls = { ...s.segmentBlobUrls }
+          delete newTelemetries[id]
+          delete newBlobUrls[id]
+          const mergedTrack = mergeSegmentTelemetries(sorted, newTelemetries)
+          const totalDuration = totalSegmentsDuration(sorted)
+          return {
+            project: {
+              ...s.project,
+              segments: sorted,
+              telemetry: mergedTrack ?? undefined,
+              timeline: { ...s.project.timeline, duration: totalDuration },
+            },
+            segmentTelemetries: newTelemetries,
+            segmentBlobUrls: newBlobUrls,
+            isDirty: true,
+          }
+        }),
+
+      setSegmentTelemetry: (id, track) =>
+        set((s) => {
+          const allTelemetries = { ...s.segmentTelemetries, [id]: track }
+          const sorted = s.project?.segments ?? []
+          const mergedTrack = mergeSegmentTelemetries(sorted, allTelemetries)
+          return {
+            segmentTelemetries: allTelemetries,
+            project: s.project && mergedTrack
+              ? { ...s.project, telemetry: mergedTrack }
+              : s.project,
+            isDirty: true,
+          }
+        }),
+
+      setSegmentBlobUrl: (id, url) =>
+        set((s) => ({ segmentBlobUrls: { ...s.segmentBlobUrls, [id]: url } })),
 
       addWidget: (config) => {
         const widget: WidgetConfig = { id: nanoid("widget_"), ...config }

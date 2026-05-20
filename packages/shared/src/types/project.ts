@@ -3,6 +3,7 @@ import { VideoMetadataSchema } from "./video"
 import { TelemetryTrackSchema } from "./telemetry"
 import { WidgetConfigSchema } from "./widget"
 import { TimelineStateSchema } from "./timeline"
+import { VideoSegmentSchema } from "./segment"
 
 export const ExportSettingsSchema = z.object({
   resolution: z.enum(["1080p", "4K", "720p", "1080p-vertical", "4K-vertical"]),
@@ -28,6 +29,7 @@ export const ProjectSchema = z.object({
   exportSettings: ExportSettingsSchema.optional(),
   templateId: z.string().optional(),
   startFinishLine: z.object({ lat: z.number(), lon: z.number() }).optional(),
+  segments: z.array(VideoSegmentSchema).optional(),
 })
 
 export type Project = z.infer<typeof ProjectSchema>

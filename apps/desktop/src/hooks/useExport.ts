@@ -35,6 +35,8 @@ export function useExport() {
     setOverlayTime: (t: number) => void,
     options: ExportSettings & {
       videoPath: string
+      /** Native file paths for multi-segment export (replaces videoPath) */
+      segmentPaths?: string[]
       fps: number
       duration: number
       videoWidth: number
@@ -50,7 +52,10 @@ export function useExport() {
       return
     }
 
-    if (options.videoPath.startsWith("blob:")) {
+    const isMultiSeg = (options.segmentPaths?.length ?? 0) > 1
+    const primaryPath = isMultiSeg ? options.segmentPaths![0] : options.videoPath
+
+    if (!isMultiSeg && options.videoPath.startsWith("blob:")) {
       setState((s) => ({
         ...s,
         phase: "error",
@@ -157,7 +162,8 @@ export function useExport() {
 
       await invoke("render_video", {
         options: {
-          input_path: options.videoPath,
+          input_path: isMultiSeg ? primaryPath : options.videoPath,
+          input_paths: isMultiSeg ? options.segmentPaths : null,
           overlay_frames_dir: framesDir,
           output_path: outputPath,
           width: options.videoWidth,

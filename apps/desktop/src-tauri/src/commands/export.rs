@@ -6,6 +6,8 @@ use tauri_plugin_shell::ShellExt;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ExportOptions {
     pub input_path: String,
+    /// Multiple input paths — when set, uses FFmpeg concat demuxer instead of single input.
+    pub input_paths: Option<Vec<String>>,
     /// Directory containing overlay frames named frame_00000.png, frame_00001.png, …
     pub overlay_frames_dir: String,
     pub output_path: String,
@@ -37,11 +39,50 @@ pub async fn render_video(
     app: tauri::AppHandle,
     options: ExportOptions,
 ) -> Result<String, String> {
+    use std::io::Write;
+
     *get_cancel_flag().lock().unwrap() = false;
 
     let frames_pattern = format!("{}/frame_%05d.png", options.overlay_frames_dir);
     let fps_str = options.fps.to_string();
     let crf_str = options.crf.to_string();
+
+    // Build concat list file when multiple input paths are provided
+    let concat_list_path: Option<String> = if let Some(ref paths) = options.input_paths {
+        if paths.len() > 1 {
+            let list_path = format!("{}/concat_list.txt", options.overlay_frames_dir);
+            let mut f = std::fs::File::create(&list_path)
+                .map_err(|e| format!("Failed to create concat list: {e}"))?;
+            for p in paths {
+                writeln!(f, "file '{}'", p.replace('\'', "'\\''"))
+                    .map_err(|e| format!("Failed to write concat list: {e}"))?;
+            }
+            Some(list_path)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Choose video input args: concat demuxer or single file
+    let (video_input_args, video_input_path): (Vec<String>, String) =
+        if let Some(ref list) = concat_list_path {
+            (
+                vec![
+                    "-f".to_string(), "concat".to_string(),
+                    "-safe".to_string(), "0".to_string(),
+                    "-i".to_string(), list.clone(),
+                ],
+                list.clone(),
+            )
+        } else {
+            (
+                vec!["-i".to_string(), options.input_path.clone()],
+                options.input_path.clone(),
+            )
+        };
+    let _ = video_input_path; // used indirectly via video_input_args
 
     // Compute a resolution-scaled target bitrate for VideoToolbox.
     // VideoToolbox -q:v with no bitrate cap can produce files 2–3× larger than the source.
@@ -72,23 +113,22 @@ pub async fn render_video(
 
     // Try hardware encoder first — 10–20× faster on Apple Silicon / Intel Mac
     if let Some(hw) = hw_codec {
-        let mut hw_args: Vec<&str> = vec![
-            "-y",
-            "-i", &options.input_path,
-            "-framerate", &fps_str,
-            "-i", &frames_pattern,
-            "-filter_complex", "[0:v][1:v]overlay=0:0",
-            "-c:v", hw,
-            "-b:v", &hw_bitrate_str,
-            "-maxrate", &hw_maxrate_str,
-            "-bufsize", &hw_bufsize_str,
-            "-allow_sw", "1",   // transparent software fallback if GPU unavailable
-            "-c:a", "copy",
-            "-movflags", "+faststart",
-        ];
-        let dur_refs: Vec<&str> = duration_args.iter().map(|s| s.as_str()).collect();
-        hw_args.extend(dur_refs.iter().copied());
-        hw_args.push(&options.output_path);
+        let mut hw_args: Vec<String> = vec!["-y".to_string()];
+        hw_args.extend(video_input_args.clone());
+        hw_args.extend([
+            "-framerate".to_string(), fps_str.clone(),
+            "-i".to_string(), frames_pattern.clone(),
+            "-filter_complex".to_string(), "[0:v][1:v]overlay=0:0".to_string(),
+            "-c:v".to_string(), hw.to_string(),
+            "-b:v".to_string(), hw_bitrate_str.clone(),
+            "-maxrate".to_string(), hw_maxrate_str.clone(),
+            "-bufsize".to_string(), hw_bufsize_str.clone(),
+            "-allow_sw".to_string(), "1".to_string(),
+            "-c:a".to_string(), "copy".to_string(),
+            "-movflags".to_string(), "+faststart".to_string(),
+        ]);
+        hw_args.extend(duration_args.clone());
+        hw_args.push(options.output_path.clone());
 
         let hw_out = app
             .shell()
@@ -113,26 +153,25 @@ pub async fn render_video(
         _ => "libx264",
     };
 
-    let mut sw_args: Vec<&str> = vec![
-        "-y",
-        "-i", &options.input_path,
-        "-framerate", &fps_str,
-        "-i", &frames_pattern,
-        "-filter_complex", "[0:v][1:v]overlay=0:0",
-        "-c:v", sw_codec,
-        "-crf", &crf_str,
-        "-preset", "medium",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-    ];
-    let dur_refs: Vec<&str> = duration_args.iter().map(|s| s.as_str()).collect();
-    sw_args.extend(dur_refs.iter().copied());
-    sw_args.push(&options.output_path);
+    let mut sw_args: Vec<String> = vec!["-y".to_string()];
+    sw_args.extend(video_input_args.clone());
+    sw_args.extend([
+        "-framerate".to_string(), fps_str.clone(),
+        "-i".to_string(), frames_pattern.clone(),
+        "-filter_complex".to_string(), "[0:v][1:v]overlay=0:0".to_string(),
+        "-c:v".to_string(), sw_codec.to_string(),
+        "-crf".to_string(), crf_str.clone(),
+        "-preset".to_string(), "medium".to_string(),
+        "-c:a".to_string(), "copy".to_string(),
+        "-movflags".to_string(), "+faststart".to_string(),
+    ]);
+    sw_args.extend(duration_args.clone());
+    sw_args.push(options.output_path.clone());
 
     let output = app
         .shell()
         .command("ffmpeg")
-        .args(sw_args)
+        .args(&sw_args)
         .output()
         .await
         .map_err(|e| format!("ffmpeg render failed: {e}"))?;

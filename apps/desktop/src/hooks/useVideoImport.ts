@@ -2,7 +2,7 @@ import { useState, useCallback } from "react"
 import { useProjectStore } from "@/store/useProjectStore"
 import { useAppStore } from "@/store/useAppStore"
 import { nanoid } from "@velocity/shared"
-import type { VideoFile } from "@velocity/shared"
+import type { VideoFile, VideoSegment, TelemetryTrack } from "@velocity/shared"
 import { isTauri, probeVideoElement, openBrowserFilePicker } from "@/lib/tauri"
 import { simulateTelemetry, normalizeTelemetry, computeSpeed, computeLeanAngle, extractGPMFFromFile } from "@velocity/telemetry"
 
@@ -21,6 +21,7 @@ export function useVideoImport() {
 
   const setVideo = useProjectStore((s) => s.setVideo)
   const setTelemetry = useProjectStore((s) => s.setTelemetry)
+  const addSegments = useProjectStore((s) => s.addSegments)
   const createProject = useProjectStore((s) => s.createProject)
   const project = useProjectStore((s) => s.project)
 
@@ -177,15 +178,117 @@ export function useVideoImport() {
     }
   }, [setVideo, setTelemetry, createProject, project, autoSimulate])
 
+  /** Import multiple video files as sequential segments */
+  const importSegments = useCallback(async (files: File[], replace = true): Promise<void> => {
+    const videoFiles = files.filter((f) => /\.(mp4|mov)$/i.test(f.name) || f.type.startsWith("video/"))
+    if (videoFiles.length === 0) return
+
+    setState({ isImporting: true, error: null, progress: `Importando ${videoFiles.length} arquivo(s)...` })
+    if (!project) createProject()
+    useAppStore.getState().setView("editor")
+
+    try {
+      const newSegs: VideoSegment[] = []
+      const telMap: Record<string, TelemetryTrack> = {}
+      const blobMap: Record<string, string> = {}
+
+      for (const file of videoFiles) {
+        const id = nanoid("seg_")
+        setState({ isImporting: true, error: null, progress: `Lendo ${file.name}...` })
+
+        let duration = 0, fps = 30, width = 1920, height = 1080, codec = "video/mp4"
+        let nativePath: string | undefined
+
+        if (isTauri()) {
+          nativePath = (file as File & { path?: string }).path
+          if (nativePath) {
+            try {
+              const { invoke, convertFileSrc } = await import("@tauri-apps/api/core")
+              const probe = await invoke<{
+                duration: number; fps: number; width: number; height: number; codec: string
+              }>("probe_video", { path: nativePath })
+              duration = probe.duration; fps = probe.fps; width = probe.width
+              height = probe.height; codec = probe.codec
+              blobMap[id] = convertFileSrc(nativePath)
+            } catch {
+              const meta = await probeVideoElement(file)
+              duration = meta.duration; fps = meta.fps; width = meta.width; height = meta.height
+              blobMap[id] = URL.createObjectURL(file)
+            }
+          } else {
+            const meta = await probeVideoElement(file)
+            duration = meta.duration; fps = meta.fps; width = meta.width; height = meta.height
+            blobMap[id] = URL.createObjectURL(file)
+          }
+        } else {
+          const meta = await probeVideoElement(file)
+          duration = meta.duration; fps = meta.fps; width = meta.width; height = meta.height
+          blobMap[id] = URL.createObjectURL(file)
+        }
+
+        const isGoPro = /^(GH|GX|GL|GP|GOPR)/i.test(file.name)
+        const seg: VideoSegment = {
+          id,
+          path: nativePath ?? blobMap[id],
+          name: file.name,
+          order: 0,
+          startGlobalTime: 0,
+          duration,
+          fps,
+          width,
+          height,
+          codec,
+          hasGPMF: isGoPro,
+          size: file.size,
+        }
+        newSegs.push(seg)
+
+        if (isGoPro) {
+          setState({ isImporting: true, error: null, progress: `Extraindo GPMF de ${file.name}...` })
+          try {
+            let track: TelemetryTrack | null = null
+            if (nativePath) {
+              const { convertFileSrc } = await import("@tauri-apps/api/core")
+              const { extractGPMFFromUrl } = await import("@velocity/telemetry")
+              track = await extractGPMFFromUrl(convertFileSrc(nativePath), nativePath)
+            } else {
+              track = await extractGPMFFromFile(file)
+            }
+            if (track && track.frames.length > 0) {
+              const withSpeed = computeSpeed(track.frames)
+              const withLean = computeLeanAngle(withSpeed)
+              telMap[id] = normalizeTelemetry({ ...track, frames: withLean }, {
+                smooth: true, smoothWindow: 5, resample: true, targetFps: 30,
+              })
+            }
+          } catch { /* GPMF optional — continue without */ }
+        }
+      }
+
+      addSegments(newSegs, telMap, blobMap, replace)
+      setState({ isImporting: false, error: null, progress: null })
+    } catch (err) {
+      setState({ isImporting: false, error: String(err), progress: null })
+    }
+  }, [project, createProject, addSegments])
+
   /** Unified drop handler — works in both Tauri and browser */
   const importFromDrop = useCallback(async (files: FileList | File[]): Promise<VideoFile | null> => {
     const arr = Array.from(files)
-    const videoFile = arr.find((f) => /\.(mp4|mov|MP4|MOV)$/i.test(f.name) || f.type.startsWith("video/"))
-    if (!videoFile) {
+    const videoFiles = arr.filter((f) => /\.(mp4|mov|MP4|MOV)$/i.test(f.name) || f.type.startsWith("video/"))
+
+    if (videoFiles.length === 0) {
       setState({ isImporting: false, error: "Formato não suportado. Use MP4 ou MOV.", progress: null })
       return null
     }
 
+    // Multiple files → segment mode
+    if (videoFiles.length > 1) {
+      await importSegments(videoFiles)
+      return null
+    }
+
+    const videoFile = videoFiles[0]!
     if (isTauri()) {
       // In Tauri, File objects exposed via drag-drop have a .path property
       const path = (videoFile as File & { path?: string }).path
@@ -196,7 +299,7 @@ export function useVideoImport() {
     }
 
     return importFromFile(videoFile)
-  }, [importFromPath, importFromFile])
+  }, [importFromPath, importFromFile, importSegments])
 
   /** Open native picker (Tauri) or browser file picker */
   const openFilePicker = useCallback(async (): Promise<VideoFile | null> => {
@@ -220,12 +323,48 @@ export function useVideoImport() {
     return null
   }, [importFromPath, importFromFile])
 
+  /** Open picker for multiple files (segment import) */
+  const openSegmentsPicker = useCallback(async (): Promise<void> => {
+    if (isTauri()) {
+      try {
+        const { open } = await import("@tauri-apps/plugin-dialog")
+        const selected = await open({
+          multiple: true,
+          filters: [{ name: "Video", extensions: ["mp4", "mov"] }],
+        })
+        if (Array.isArray(selected) && selected.length > 0) {
+          // Tauri returns path strings for each selected file
+          const fakeFiles = selected.map((path) => ({
+            name: (path as string).split("/").pop() ?? path,
+            path,
+          })) as unknown as File[]
+          await importSegments(fakeFiles, false)
+        }
+      } catch (err) {
+        console.error("Tauri file picker error:", err)
+      }
+      return
+    }
+    // Browser fallback: use hidden multi-file input
+    const input = document.createElement("input")
+    input.type = "file"
+    input.multiple = true
+    input.accept = "video/mp4,video/quicktime,.mp4,.mov"
+    input.onchange = async () => {
+      const files = Array.from(input.files ?? [])
+      if (files.length > 0) await importSegments(files, false)
+    }
+    input.click()
+  }, [importSegments])
+
   return {
     ...state,
     importFromPath,
     importFromFile,
     importFromDrop,
+    importSegments,
     openFilePicker,
+    openSegmentsPicker,
     /** @deprecated use importFromPath or importFromFile */
     importVideo: importFromPath,
   }

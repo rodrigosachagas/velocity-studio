@@ -6,6 +6,7 @@ import { useProjectStore } from "@/store/useProjectStore"
 import { Icon } from "@/components/ui/Icon"
 import { isTauri } from "@/lib/tauri"
 import type { SimulationProfile } from "@velocity/telemetry"
+import type { VideoSegment } from "@velocity/shared"
 
 const SIM_PROFILES: { id: SimulationProfile; label: string; icon: string }[] = [
   { id: "road",     label: "Road",     icon: "gauge" },
@@ -16,11 +17,15 @@ const SIM_PROFILES: { id: SimulationProfile; label: string; icon: string }[] = [
 ]
 
 export function VideoImportPanel() {
-  const { isImporting, error, progress, openFilePicker, importFromDrop } = useVideoImport()
+  const { isImporting, error, progress, openFilePicker, importFromDrop, openSegmentsPicker } = useVideoImport()
   const { isExtracting, progress: telProgress, error: telError, extract, extractFromGPX, simulate } = useTelemetryExtraction()
   const project = useProjectStore((s) => s.project)
+  const removeSegment = useProjectStore((s) => s.removeSegment)
+  const segmentTelemetries = useProjectStore((s) => s.segmentTelemetries)
   const video = project?.video
   const telemetry = project?.telemetry
+  const segments: VideoSegment[] = [...(project?.segments ?? [])].sort((a, b) => a.order - b.order)
+  const isMultiSeg = segments.length > 0
   const [isDragOver, setIsDragOver] = useState(false)
   const [showSim, setShowSim] = useState(false)
   const gpxInputRef = useRef<HTMLInputElement>(null)
@@ -43,6 +48,9 @@ export function VideoImportPanel() {
     e.target.value = ""
   }, [extractFromGPX])
 
+  const formatDuration = (secs: number) =>
+    `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, "0")}`
+
   if (video) {
     return (
       <motion.div
@@ -50,42 +58,89 @@ export function VideoImportPanel() {
         animate={{ opacity: 1, y: 0 }}
         className="p-3 space-y-2"
       >
-        {/* Video info */}
-        <div className="p-3 rounded-xl bg-surface-200 border border-white/[0.08]">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-6 h-6 rounded bg-blue-accent/20 flex items-center justify-center shrink-0">
-              <Icon name="video" size={12} className="text-blue-accent" />
+        {/* Multi-segment list */}
+        {isMultiSeg ? (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between px-0.5 mb-1">
+              <span className="text-[10px] text-white/40 uppercase tracking-widest">
+                {segments.length} segmento{segments.length !== 1 ? "s" : ""}
+              </span>
+              <span className="text-[10px] text-white/30">
+                {formatDuration(segments.reduce((s, seg) => s + seg.duration, 0))}
+              </span>
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium text-white/80 truncate">{video.name}</div>
-              <div className="text-[10px] text-white/35">
-                {video.fps.toFixed(0)}fps · {video.width}×{video.height}
-                {video.codec ? ` · ${video.codec.split("/").pop()?.toUpperCase()}` : ""}
-              </div>
-            </div>
+            {segments.map((seg) => {
+              const hasTel = !!segmentTelemetries[seg.id]
+              return (
+                <div key={seg.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-surface-200 border border-white/[0.06] group">
+                  <div className="w-4 h-4 rounded bg-blue-accent/15 flex items-center justify-center shrink-0 text-[9px] font-bold text-blue-accent/60">
+                    {seg.order + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10px] font-medium text-white/70 truncate">{seg.name}</div>
+                    <div className="text-[9px] text-white/30">{formatDuration(seg.duration)}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {hasTel && (
+                      <span className="px-1 py-0.5 rounded bg-accent/10 text-accent/60 text-[8px]">GPS</span>
+                    )}
+                    <button
+                      onClick={() => removeSegment(seg.id)}
+                      className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-white/20 hover:text-red-400 transition-all"
+                      title="Remover segmento"
+                    >
+                      <Icon name="x" size={10} />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
             <button
-              onClick={openFilePicker}
-              className="p-1 rounded hover:bg-white/[0.07] text-white/30 hover:text-white/70 transition-colors shrink-0"
-              title="Trocar vídeo"
+              onClick={openSegmentsPicker}
+              disabled={isImporting}
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] border border-dashed border-white/[0.1] text-white/30 hover:text-white/60 text-[10px] transition-all disabled:opacity-40"
             >
-              <Icon name="upload" size={12} />
+              <Icon name="plus" size={10} />
+              Adicionar arquivos
             </button>
           </div>
-
-          <div className="flex gap-1 text-[10px]">
-            <span className="px-1.5 py-0.5 rounded bg-white/[0.05] text-white/35">
-              {Math.floor(video.duration / 60)}:{String(Math.floor(video.duration % 60)).padStart(2, "0")}
-            </span>
-            {video.size > 0 && (
+        ) : (
+          /* Single-file video info */
+          <div className="p-3 rounded-xl bg-surface-200 border border-white/[0.08]">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-6 h-6 rounded bg-blue-accent/20 flex items-center justify-center shrink-0">
+                <Icon name="video" size={12} className="text-blue-accent" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-white/80 truncate">{video.name}</div>
+                <div className="text-[10px] text-white/35">
+                  {video.fps.toFixed(0)}fps · {video.width}×{video.height}
+                  {video.codec ? ` · ${video.codec.split("/").pop()?.toUpperCase()}` : ""}
+                </div>
+              </div>
+              <button
+                onClick={openFilePicker}
+                className="p-1 rounded hover:bg-white/[0.07] text-white/30 hover:text-white/70 transition-colors shrink-0"
+                title="Trocar vídeo"
+              >
+                <Icon name="upload" size={12} />
+              </button>
+            </div>
+            <div className="flex gap-1 text-[10px]">
               <span className="px-1.5 py-0.5 rounded bg-white/[0.05] text-white/35">
-                {(video.size / 1024 / 1024).toFixed(0)} MB
+                {formatDuration(video.duration)}
               </span>
-            )}
-            {video.hasGPMF && (
-              <span className="px-1.5 py-0.5 rounded bg-accent/10 text-accent/70">GPMF</span>
-            )}
+              {video.size > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-white/[0.05] text-white/35">
+                  {(video.size / 1024 / 1024).toFixed(0)} MB
+                </span>
+              )}
+              {video.hasGPMF && (
+                <span className="px-1.5 py-0.5 rounded bg-accent/10 text-accent/70">GPMF</span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Telemetry section */}
         {!telemetry ? (
@@ -253,7 +308,7 @@ export function VideoImportPanel() {
           </div>
           {!isImporting && (
             <div className="text-[10px] text-white/25 mt-0.5">
-              Arraste · MP4 · MOV
+              Arraste 1 ou + arquivos · MP4 · MOV
             </div>
           )}
         </div>
