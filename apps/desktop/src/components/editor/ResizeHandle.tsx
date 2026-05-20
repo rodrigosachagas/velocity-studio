@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react"
 import { useProjectStore } from "@/store/useProjectStore"
+import { useAppStore } from "@/store/useAppStore"
 import type { WidgetConfig } from "@velocity/shared"
 
 type HandlePosition = "nw" | "ne" | "se" | "sw" | "n" | "e" | "s" | "w"
@@ -18,10 +19,13 @@ const HANDLE_CURSORS: Record<HandlePosition, string> = {
 interface ResizeHandleProps {
   widgetId: string
   widget: WidgetConfig
+  scaleX: number
+  scaleY: number
 }
 
-export function ResizeHandle({ widgetId, widget }: ResizeHandleProps) {
+export function ResizeHandle({ widgetId, widget, scaleX, scaleY }: ResizeHandleProps) {
   const updateWidget = useProjectStore((s) => s.updateWidget)
+  const zoom = useAppStore((s) => s.zoom)
   const startRef = useRef<{ mouseX: number; mouseY: number; width: number; height: number; x: number; y: number } | null>(null)
 
   const onMouseDown = useCallback(
@@ -40,10 +44,13 @@ export function ResizeHandle({ widgetId, widget }: ResizeHandleProps) {
 
       const onMouseMove = (ev: MouseEvent) => {
         if (!startRef.current) return
-        const dx = ev.clientX - startRef.current.mouseX
-        const dy = ev.clientY - startRef.current.mouseY
+        // Mouse delta is in screen pixels. Convert to video pixels:
+        // screen → canvas pixels (÷ zoom) → video pixels (÷ scaleX/Y)
+        const dx = (ev.clientX - startRef.current.mouseX) / zoom / scaleX
+        const dy = (ev.clientY - startRef.current.mouseY) / zoom / scaleY
 
-        const minSize = 40
+        // Minimum size in video pixels (~40px at reference 1920 width)
+        const minSize = 40 / scaleX
 
         const updates: Partial<WidgetConfig> = {}
 

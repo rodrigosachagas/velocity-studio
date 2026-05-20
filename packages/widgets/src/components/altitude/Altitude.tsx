@@ -1,6 +1,8 @@
-import { motion, useSpring } from "framer-motion"
+import { useEffect } from "react"
+import { useTransform, motion, useSpring } from "framer-motion"
 import type { AltitudeUnit } from "@velocity/shared"
 import { metersToFeet } from "@velocity/shared"
+import { useExportMode } from "../../contexts/ExportModeContext"
 
 interface AltitudeProps {
   altitude?: number
@@ -19,8 +21,13 @@ export function Altitude({
   width = 140,
   height = 60,
 }: AltitudeProps) {
-  const value = unit === "ft" ? metersToFeet(altitude) : altitude
-  const springAlt = useSpring(value, { stiffness: 60, damping: 20 })
+  const isExport = useExportMode()
+  const rawValue = unit === "ft" ? metersToFeet(altitude) : altitude
+
+  const springAlt = useSpring(0, { stiffness: 60, damping: 20 })
+  const altText = useTransform(springAlt, (v) => Math.round(v).toString())
+
+  useEffect(() => { isExport ? springAlt.jump(rawValue) : springAlt.set(rawValue) }, [rawValue, isExport])
 
   const bg =
     theme === "glass"
@@ -46,11 +53,11 @@ export function Altitude({
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: "0 16px",
+        padding: "0 14px",
+        boxSizing: "border-box",
       }}
     >
-      {/* Mountain icon */}
-      <svg width={24} height={24} viewBox="0 0 24 24">
+      <svg width={22} height={22} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
         <path
           d="M3 20L12 4L21 20H3Z"
           fill="none"
@@ -61,7 +68,7 @@ export function Altitude({
         <path d="M8 20L12 12L16 20" fill={accentColor} opacity={0.3} />
       </svg>
 
-      <div>
+      <div style={{ minWidth: 0 }}>
         <div
           style={{
             fontSize: 9,
@@ -76,15 +83,15 @@ export function Altitude({
         <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
           <motion.span
             style={{
-              fontSize: 22,
+              fontSize: Math.min(22, height * 0.42),
               fontWeight: 700,
               color: textColor,
               fontVariantNumeric: "tabular-nums",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui, monospace",
               lineHeight: 1,
             }}
           >
-            {springAlt.get().toFixed(0)}
+            {altText}
           </motion.span>
           <span
             style={{

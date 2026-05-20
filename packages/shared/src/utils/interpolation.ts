@@ -38,33 +38,25 @@ export function interpolateTelemetryAt(
 
   const t = (timestamp - a.timestamp) / (b.timestamp - a.timestamp)
 
+  // For each numeric field: if both neighbours have the value, interpolate.
+  // If only one neighbour has it, use that value (no undefined→0 fallback).
+  const num = (av: number | undefined, bv: number | undefined, useLerp = true): number | undefined => {
+    if (av !== undefined && bv !== undefined) return useLerp ? lerp(av, bv, t) : av
+    return av ?? bv
+  }
+
   return {
     timestamp,
-    speed: a.speed !== undefined && b.speed !== undefined ? lerp(a.speed, b.speed, t) : a.speed,
-    altitude:
-      a.altitude !== undefined && b.altitude !== undefined
-        ? lerp(a.altitude, b.altitude, t)
-        : a.altitude,
-    latitude:
-      a.latitude !== undefined && b.latitude !== undefined
-        ? lerp(a.latitude, b.latitude, t)
-        : a.latitude,
-    longitude:
-      a.longitude !== undefined && b.longitude !== undefined
-        ? lerp(a.longitude, b.longitude, t)
-        : a.longitude,
+    speed:    num(a.speed, b.speed),
+    altitude: num(a.altitude, b.altitude),
+    latitude: num(a.latitude, b.latitude),
+    longitude: num(a.longitude, b.longitude),
     heading:
       a.heading !== undefined && b.heading !== undefined
         ? lerpAngle(a.heading, b.heading, t)
-        : a.heading,
-    gForce:
-      a.gForce !== undefined && b.gForce !== undefined
-        ? lerp(a.gForce, b.gForce, t)
-        : a.gForce,
-    leanAngle:
-      a.leanAngle !== undefined && b.leanAngle !== undefined
-        ? lerp(a.leanAngle, b.leanAngle, t)
-        : a.leanAngle,
+        : (a.heading ?? b.heading),
+    gForce:    num(a.gForce, b.gForce),
+    leanAngle: num(a.leanAngle, b.leanAngle),
     acceleration:
       a.acceleration && b.acceleration
         ? {
@@ -72,7 +64,7 @@ export function interpolateTelemetryAt(
             y: lerp(a.acceleration.y, b.acceleration.y, t),
             z: lerp(a.acceleration.z, b.acceleration.z, t),
           }
-        : a.acceleration,
+        : (a.acceleration ?? b.acceleration),
     gyroscope:
       a.gyroscope && b.gyroscope
         ? {
@@ -80,7 +72,7 @@ export function interpolateTelemetryAt(
             y: lerp(a.gyroscope.y, b.gyroscope.y, t),
             z: lerp(a.gyroscope.z, b.gyroscope.z, t),
           }
-        : a.gyroscope,
+        : (a.gyroscope ?? b.gyroscope),
   }
 }
 

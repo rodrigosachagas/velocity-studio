@@ -1,34 +1,47 @@
-import { useCallback, useState } from "react"
-import { motion } from "framer-motion"
+import { useCallback, useRef, useState } from "react"
+import { motion, AnimatePresence } from "framer-motion"
 import { useVideoImport } from "@/hooks/useVideoImport"
 import { useTelemetryExtraction } from "@/hooks/useTelemetryExtraction"
 import { useProjectStore } from "@/store/useProjectStore"
 import { Icon } from "@/components/ui/Icon"
+import { isTauri } from "@/lib/tauri"
+import type { SimulationProfile } from "@velocity/telemetry"
+
+const SIM_PROFILES: { id: SimulationProfile; label: string; icon: string }[] = [
+  { id: "road",     label: "Road",     icon: "gauge" },
+  { id: "track",    label: "Track",    icon: "zap" },
+  { id: "mountain", label: "Mountain", icon: "trending-up" },
+  { id: "cycling",  label: "Cycling",  icon: "activity" },
+  { id: "walking",  label: "Walking",  icon: "footprints" },
+]
 
 export function VideoImportPanel() {
   const { isImporting, error, progress, openFilePicker, importFromDrop } = useVideoImport()
-  const { isExtracting, progress: telProgress, error: telError, extract } = useTelemetryExtraction()
+  const { isExtracting, progress: telProgress, error: telError, extract, extractFromGPX, simulate } = useTelemetryExtraction()
   const project = useProjectStore((s) => s.project)
   const video = project?.video
   const telemetry = project?.telemetry
   const [isDragOver, setIsDragOver] = useState(false)
+  const [showSim, setShowSim] = useState(false)
+  const gpxInputRef = useRef<HTMLInputElement>(null)
 
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault()
-      setIsDragOver(false)
-      if (e.dataTransfer.files.length > 0) {
-        await importFromDrop(e.dataTransfer.files)
-      }
-    },
-    [importFromDrop]
-  )
-
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
-    setIsDragOver(true)
-  }
+    setIsDragOver(false)
+    if (e.dataTransfer.files.length > 0) {
+      await importFromDrop(e.dataTransfer.files)
+    }
+  }, [importFromDrop])
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true) }
   const handleDragLeave = () => setIsDragOver(false)
+
+  const handleGPXPick = useCallback(() => gpxInputRef.current?.click(), [])
+  const handleGPXChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) await extractFromGPX(file)
+    e.target.value = ""
+  }, [extractFromGPX])
 
   if (video) {
     return (
@@ -37,7 +50,7 @@ export function VideoImportPanel() {
         animate={{ opacity: 1, y: 0 }}
         className="p-3 space-y-2"
       >
-        {/* Video loaded */}
+        {/* Video info */}
         <div className="p-3 rounded-xl bg-surface-200 border border-white/[0.08]">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-6 h-6 rounded bg-blue-accent/20 flex items-center justify-center shrink-0">
@@ -50,7 +63,6 @@ export function VideoImportPanel() {
                 {video.codec ? ` · ${video.codec.split("/").pop()?.toUpperCase()}` : ""}
               </div>
             </div>
-            {/* Replace button */}
             <button
               onClick={openFilePicker}
               className="p-1 rounded hover:bg-white/[0.07] text-white/30 hover:text-white/70 transition-colors shrink-0"
@@ -75,42 +87,129 @@ export function VideoImportPanel() {
           </div>
         </div>
 
-        {/* Telemetry extraction */}
+        {/* Telemetry section */}
         {!telemetry ? (
-          <button
-            onClick={extract}
-            disabled={isExtracting || !video.hasGPMF}
-            title={!video.hasGPMF ? "Este vídeo não tem dados GPMF (apenas vídeos GoPro)" : ""}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-accent/10 hover:bg-accent/15 border border-accent/20 text-accent text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {isExtracting ? (
-              <>
-                <div className="w-3 h-3 border border-accent/40 border-t-accent rounded-full animate-spin" />
-                {telProgress ?? "Extraindo..."}
-              </>
-            ) : (
-              <>
-                <Icon name="activity" size={12} />
-                {video.hasGPMF ? "Extrair Telemetria" : "Sem dados GPS"}
-              </>
+          <div className="space-y-1.5">
+            {/* GPMF extraction — manual trigger only in Tauri (browser auto-extracts on import) */}
+            {video.hasGPMF && isTauri() && (
+              <button
+                onClick={extract}
+                disabled={isExtracting}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-accent/10 hover:bg-accent/15 border border-accent/20 text-accent text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isExtracting ? (
+                  <>
+                    <div className="w-3 h-3 border border-accent/40 border-t-accent rounded-full animate-spin" />
+                    {telProgress ?? "Extraindo..."}
+                  </>
+                ) : (
+                  <>
+                    <Icon name="activity" size={12} />
+                    Extrair Telemetria GPMF
+                  </>
+                )}
+              </button>
             )}
-          </button>
+
+            {/* GPX import */}
+            <button
+              onClick={handleGPXPick}
+              disabled={isExtracting}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.08] text-white/50 hover:text-white/80 text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Icon name="map-pin" size={12} />
+              Importar arquivo GPX
+            </button>
+            <input
+              ref={gpxInputRef}
+              type="file"
+              accept=".gpx,application/gpx+xml"
+              className="hidden"
+              onChange={handleGPXChange}
+            />
+
+            {/* Simulate */}
+            <button
+              onClick={() => setShowSim((v) => !v)}
+              disabled={isExtracting}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.08] text-white/50 hover:text-white/80 text-xs font-medium transition-all disabled:opacity-40"
+            >
+              <Icon name="sparkle" size={12} />
+              Simular dados de telemetria
+            </button>
+
+            <AnimatePresence>
+              {showSim && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pt-1 grid grid-cols-5 gap-1">
+                    {SIM_PROFILES.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => simulate(p.id)}
+                        disabled={isExtracting}
+                        className="flex flex-col items-center gap-1 py-2 rounded-lg bg-surface-200 hover:bg-surface-300 border border-white/[0.06] hover:border-accent/30 text-white/40 hover:text-white/80 transition-all disabled:opacity-40"
+                      >
+                        <Icon name={p.icon as never} size={12} />
+                        <span className="text-[9px]">{p.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {isExtracting && (
+                    <div className="flex items-center gap-1.5 mt-2 px-1">
+                      <div className="w-3 h-3 border border-accent/40 border-t-accent rounded-full animate-spin" />
+                      <span className="text-[10px] text-white/40">{telProgress ?? "Gerando..."}</span>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         ) : (
           <div className="p-2.5 rounded-xl bg-surface-200 border border-white/[0.08]">
             <div className="flex items-center gap-2">
               <div className="w-5 h-5 rounded bg-accent/20 flex items-center justify-center shrink-0">
                 <Icon name="activity" size={11} className="text-accent" />
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <div className="text-xs font-medium text-white/80">Telemetria carregada</div>
                 <div className="text-[10px] text-white/35">
                   {telemetry.frames.length.toLocaleString()} frames · {telemetry.sampleRate.toFixed(0)} fps
+                  {telemetry.metadata?.profile ? ` · sim:${telemetry.metadata.profile}` : ""}
+                  {telemetry.metadata?.source === "gpx" ? ` · GPX` : ""}
                 </div>
+              </div>
+              {/* Re-import options */}
+              <div className="flex gap-1">
+                <button
+                  onClick={handleGPXPick}
+                  className="p-1 rounded hover:bg-white/[0.07] text-white/25 hover:text-white/60 transition-colors"
+                  title="Trocar GPX"
+                >
+                  <Icon name="map-pin" size={11} />
+                </button>
+                <button
+                  onClick={() => simulate()}
+                  className="p-1 rounded hover:bg-white/[0.07] text-white/25 hover:text-white/60 transition-colors"
+                  title="Re-simular"
+                >
+                  <Icon name="sparkle" size={11} />
+                </button>
               </div>
             </div>
           </div>
         )}
 
+        {progress && !error && (
+          <div className="flex items-center gap-1.5 px-1">
+            <div className="w-3 h-3 border border-accent/40 border-t-accent rounded-full animate-spin shrink-0" />
+            <span className="text-[10px] text-white/40">{progress}</span>
+          </div>
+        )}
         {(error || telError) && (
           <div className="text-[10px] text-red-400/90 px-1 leading-relaxed">{error ?? telError}</div>
         )}

@@ -1,19 +1,38 @@
 import { useDraggable } from "@dnd-kit/core"
 import { motion, AnimatePresence } from "framer-motion"
 import { useProjectStore } from "@/store/useProjectStore"
-import { useTimelineStore } from "@velocity/timeline"
+import { useAppStore } from "@/store/useAppStore"
 import { getWidget } from "@velocity/widgets"
 import type { WidgetConfig } from "@velocity/shared"
+import { interpolateTelemetryAt } from "@velocity/shared"
 import { ResizeHandle } from "./ResizeHandle"
+import { Icon } from "@/components/ui/Icon"
 
 export function WidgetCanvas() {
   const project = useProjectStore((s) => s.project)
   const selectedIds = useProjectStore((s) => s.selectedWidgetIds)
   const selectWidget = useProjectStore((s) => s.selectWidget)
-  const currentTime = useTimelineStore((s) => s.currentTime)
+  const removeWidget = useProjectStore((s) => s.removeWidget)
+  const duplicateWidget = useProjectStore((s) => s.duplicateWidget)
+  const setStartFinishLine = useProjectStore((s) => s.setStartFinishLine)
+  const currentTime = useAppStore((s) => s.videoCurrentTime)
+  const canvasSize = useAppStore((s) => s.canvasSize)
+  const isPickingStartFinish = useAppStore((s) => s.isPickingStartFinish)
+  const setPickingStartFinish = useAppStore((s) => s.setPickingStartFinish)
   const telemetry = project?.telemetry
+  const startFinishLine = project?.startFinishLine
 
   if (!project) return null
+
+  const videoW = project.video?.width ?? 1
+  const videoH = project.video?.height ?? 1
+  const scaleX = canvasSize ? canvasSize.width / videoW : 1
+  const scaleY = canvasSize ? canvasSize.height / videoH : 1
+
+  const handleSetStartFinish = (lat: number, lon: number) => {
+    setStartFinishLine(lat, lon)
+    setPickingStartFinish(false)
+  }
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -28,8 +47,19 @@ export function WidgetCanvas() {
                 e.stopPropagation()
                 selectWidget(widget.id, e.shiftKey)
               }}
+              onDelete={() => removeWidget(widget.id)}
+              onDuplicate={() => duplicateWidget(widget.id)}
               currentTime={currentTime}
               telemetry={telemetry}
+              scaleX={scaleX}
+              scaleY={scaleY}
+              startFinishLine={startFinishLine}
+              onSetStartFinish={
+                isPickingStartFinish && widget.type === "circuit-map"
+                  ? handleSetStartFinish
+                  : undefined
+              }
+              disableDrag={isPickingStartFinish && widget.type === "circuit-map"}
             />
           ) : null
         )}
@@ -42,7 +72,14 @@ interface DraggableWidgetProps {
   widget: WidgetConfig
   isSelected: boolean
   onSelect: (e: React.MouseEvent) => void
+  onDelete: () => void
+  onDuplicate: () => void
   currentTime: number
+  scaleX: number
+  scaleY: number
+  startFinishLine?: { lat: number; lon: number }
+  onSetStartFinish?: (lat: number, lon: number) => void
+  disableDrag?: boolean
   telemetry: ReturnType<typeof useProjectStore.getState>["project"] extends infer P
     ? P extends { telemetry?: infer T }
       ? T
@@ -54,12 +91,19 @@ function DraggableWidget({
   widget,
   isSelected,
   onSelect,
+  onDelete,
+  onDuplicate,
   currentTime,
   telemetry,
+  scaleX,
+  scaleY,
+  startFinishLine,
+  onSetStartFinish,
+  disableDrag = false,
 }: DraggableWidgetProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: widget.id,
-    disabled: widget.locked,
+    disabled: widget.locked || disableDrag,
   })
 
   const variantId = typeof widget.props?.variant === "string" ? widget.props.variant : undefined
@@ -70,6 +114,10 @@ function DraggableWidget({
 
   const tx = transform?.x ?? 0
   const ty = transform?.y ?? 0
+  const displayX = widget.x * scaleX + tx
+  const displayY = widget.y * scaleY + ty
+  const displayW = widget.width * scaleX
+  const displayH = widget.height * scaleY
 
   return (
     <motion.div
@@ -80,14 +128,14 @@ function DraggableWidget({
       transition={{ duration: 0.2 }}
       style={{
         position: "absolute",
-        left: widget.x + tx,
-        top: widget.y + ty,
-        width: widget.width,
-        height: widget.height,
+        left: displayX,
+        top: displayY,
+        width: displayW,
+        height: displayH,
         rotate: `${widget.rotation}deg`,
         zIndex: isDragging ? 9999 : widget.zIndex,
         pointerEvents: "all",
-        cursor: widget.locked ? "default" : isDragging ? "grabbing" : "grab",
+        cursor: disableDrag ? "crosshair" : widget.locked ? "default" : isDragging ? "grabbing" : "grab",
         outline: isSelected ? "1.5px solid rgba(0,255,136,0.8)" : "none",
         outlineOffset: "2px",
         borderRadius: 4,
@@ -97,13 +145,37 @@ function DraggableWidget({
       {...attributes}
     >
       <Component
-        {...extractWidgetProps(widget, currentTime, telemetry)}
-        width={widget.width}
-        height={widget.height}
+        {...extractWidgetProps(widget, currentTime, telemetry, startFinishLine)}
+        width={displayW}
+        height={displayH}
+        size={Math.min(displayW, displayH)}
+        onSetStartFinish={onSetStartFinish}
       />
 
+      {isSelected && (
+        <div
+          style={{ position: "absolute", top: 4, right: 4, zIndex: 20, display: "flex", gap: 3 }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); onDuplicate() }}
+            title="Duplicar"
+            className="w-5 h-5 flex items-center justify-center rounded bg-black/80 border border-white/15 text-white/55 hover:bg-white/10 hover:text-white/90 transition-colors cursor-pointer"
+          >
+            <Icon name="layers" size={10} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete() }}
+            title="Excluir"
+            className="w-5 h-5 flex items-center justify-center rounded bg-black/80 border border-white/15 text-white/55 hover:bg-red-500/30 hover:text-red-400 hover:border-red-500/30 transition-colors cursor-pointer"
+          >
+            <Icon name="trash" size={10} />
+          </button>
+        </div>
+      )}
+
       {isSelected && !widget.locked && (
-        <ResizeHandle widgetId={widget.id} widget={widget} />
+        <ResizeHandle widgetId={widget.id} widget={widget} scaleX={scaleX} scaleY={scaleY} />
       )}
     </motion.div>
   )
@@ -112,22 +184,15 @@ function DraggableWidget({
 function extractWidgetProps(
   widget: WidgetConfig,
   currentTime: number,
-  telemetry: { frames: { timestamp: number; speed?: number; altitude?: number; latitude?: number; longitude?: number; heading?: number; gForce?: number; acceleration?: { x: number; y: number; z: number } }[] } | undefined
+  telemetry: { frames: { timestamp: number; speed?: number; altitude?: number; latitude?: number; longitude?: number; heading?: number; gForce?: number; acceleration?: { x: number; y: number; z: number } }[] } | undefined,
+  startFinishLine?: { lat: number; lon: number },
 ) {
   const { style, props = {} } = widget
   const theme = style?.theme ?? "dark"
   const accentColor = style?.accentColor ?? "#00ff88"
 
-  // interpolate from telemetry
   const frame = telemetry
-    ? telemetry.frames.reduce(
-        (closest, f) =>
-          Math.abs(f.timestamp / 1000 - currentTime) <
-          Math.abs((closest?.timestamp ?? Infinity) / 1000 - currentTime)
-            ? f
-            : closest,
-        null as (typeof telemetry.frames)[0] | null
-      )
+    ? interpolateTelemetryAt(telemetry.frames, currentTime * 1000)
     : null
 
   return {
@@ -140,7 +205,9 @@ function extractWidgetProps(
     heading: frame?.heading,
     gForce: frame?.gForce,
     acceleration: frame?.acceleration,
+    frames: telemetry?.frames,
     currentTime,
+    startFinishLine,
     ...props,
   }
 }

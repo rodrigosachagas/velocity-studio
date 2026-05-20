@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { motion, useSpring, useTransform } from "framer-motion"
 import { metersPerSecondTo } from "@velocity/shared"
+import { useExportMode } from "../../../contexts/ExportModeContext"
 import type { SpeedometerProps } from "../types"
 
 export function NeonSpeedometer({
@@ -14,8 +16,10 @@ export function NeonSpeedometer({
   showMax = false,
   tickCount = 30,
 }: SpeedometerProps) {
+  const isExport = useExportMode()
   const converted = metersPerSecondTo(speed, unit)
-  const springSpeed = useSpring(converted, { stiffness: 100, damping: 16 })
+  const springSpeed = useSpring(0, { stiffness: 100, damping: 16 })
+  useEffect(() => { isExport ? springSpeed.jump(converted) : springSpeed.set(converted) }, [converted, isExport])
 
   const r = 72
   const circumference = 2 * Math.PI * r

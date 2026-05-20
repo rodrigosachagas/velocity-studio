@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { motion, useSpring, useTransform } from "framer-motion"
 import { metersPerSecondTo } from "@velocity/shared"
+import { useExportMode } from "../../../contexts/ExportModeContext"
 import type { SpeedometerProps } from "../types"
 
 export function RadialSpeedometer({
@@ -14,9 +16,12 @@ export function RadialSpeedometer({
   tickCount = 24,
   label,
 }: SpeedometerProps) {
+  const isExport = useExportMode()
   const converted = metersPerSecondTo(speed, unit)
-  const springSpeed = useSpring(converted, { stiffness: 80, damping: 22 })
+  const springSpeed = useSpring(0, { stiffness: 80, damping: 22 })
   const needleAngle = useTransform(springSpeed, [0, maxSpeed], [-120, 120])
+
+  useEffect(() => { isExport ? springSpeed.jump(converted) : springSpeed.set(converted) }, [converted, isExport])
 
   const bg = theme === "glass" ? "rgba(10,20,40,0.75)" :
     theme === "light" ? "rgba(245,248,255,0.97)" :
@@ -91,8 +96,8 @@ export function RadialSpeedometer({
           )
         })}
 
-        {/* Needle */}
-        <motion.g style={{ transformOrigin: `${CX}px ${CY}px`, rotate: needleAngle }}>
+        {/* Needle — transformBox:view-box keeps the pivot at SVG (100,100) at any rendered size */}
+        <motion.g style={{ transformBox: "view-box", transformOrigin: "50% 50%", rotate: needleAngle }}>
           {/* Shadow */}
           <line x1={CX} y1={CY + 6} x2={CX} y2={CY - 70}
             stroke="rgba(0,0,0,0.4)" strokeWidth={3} strokeLinecap="round" />

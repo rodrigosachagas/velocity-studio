@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react"
+import { useRef, useCallback, useEffect } from "react"
 import { useVideoImport } from "@/hooks/useVideoImport"
 import { motion, AnimatePresence } from "framer-motion"
 import {
@@ -11,18 +11,35 @@ import {
 import { restrictToParentElement } from "@dnd-kit/modifiers"
 import { useProjectStore } from "@/store/useProjectStore"
 import { useAppStore } from "@/store/useAppStore"
-import { useTimelineStore } from "@velocity/timeline"
 import { WidgetCanvas } from "./WidgetCanvas"
 import { VideoPreview } from "./VideoPreview"
 import { Icon } from "@/components/ui/Icon"
 
 export function CanvasArea() {
   const containerRef = useRef<HTMLDivElement>(null)
+  const canvasFrameRef = useRef<HTMLDivElement>(null)
   const project = useProjectStore((s) => s.project)
   const deselectAll = useProjectStore((s) => s.deselectAll)
   const updateWidget = useProjectStore((s) => s.updateWidget)
   const zoom = useAppStore((s) => s.zoom)
   const showGrid = useAppStore((s) => s.showGrid)
+  const setCanvasSize = useAppStore((s) => s.setCanvasSize)
+
+  // Measure the canvas frame div and publish its CSS pixel dimensions.
+  // Widget positions are stored in video pixel space — this ratio is used to
+  // convert between canvas display pixels and video pixels everywhere.
+  useEffect(() => {
+    const el = canvasFrameRef.current
+    if (!el) return
+    const obs = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const { width, height } = entry.contentRect
+      if (width > 0 && height > 0) setCanvasSize({ width, height })
+    })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [setCanvasSize])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } })
@@ -35,12 +52,21 @@ export function CanvasArea() {
       const widget = project?.widgets.find((w) => w.id === widgetId)
       if (!widget) return
 
+      // delta is in screen pixels; convert to video pixel space so that stored
+      // positions match the actual video frame regardless of canvas display size.
+      const canvasW = canvasFrameRef.current?.offsetWidth ?? 1
+      const canvasH = canvasFrameRef.current?.offsetHeight ?? 1
+      const videoW = project?.video?.width ?? canvasW
+      const videoH = project?.video?.height ?? canvasH
+      const scaleX = videoW / canvasW
+      const scaleY = videoH / canvasH
+
       updateWidget(widgetId, {
-        x: widget.x + delta.x / zoom,
-        y: widget.y + delta.y / zoom,
+        x: Math.round(widget.x + (delta.x / zoom) * scaleX),
+        y: Math.round(widget.y + (delta.y / zoom) * scaleY),
       })
     },
-    [project?.widgets, updateWidget, zoom]
+    [project?.widgets, project?.video, updateWidget, zoom]
   )
 
   const aspectRatio = project?.video
@@ -72,6 +98,7 @@ export function CanvasArea() {
           onDragEnd={handleDragEnd}
         >
           <motion.div
+            ref={canvasFrameRef}
             className="relative overflow-hidden rounded-lg shadow-elevated"
             style={{
               aspectRatio,

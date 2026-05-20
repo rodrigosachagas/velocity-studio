@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { motion, useSpring, useTransform } from "framer-motion"
 import { metersPerSecondTo } from "@velocity/shared"
+import { useExportMode } from "../../../contexts/ExportModeContext"
 import type { SpeedometerProps } from "../types"
 
 export function ArcSpeedometer({
@@ -15,9 +17,12 @@ export function ArcSpeedometer({
   showMax = false,
   tickCount = 9,
 }: SpeedometerProps) {
+  const isExport = useExportMode()
   const converted = metersPerSecondTo(speed, unit)
-  const springSpeed = useSpring(converted, { stiffness: 120, damping: 20 })
+  const springSpeed = useSpring(0, { stiffness: 120, damping: 20 })
   const rotation = useTransform(springSpeed, [0, maxSpeed], [-135, 135])
+
+  useEffect(() => { isExport ? springSpeed.jump(converted) : springSpeed.set(converted) }, [converted, isExport])
 
   const bg =
     theme === "glass" ? "rgba(255,255,255,0.08)" :
@@ -80,8 +85,8 @@ export function ArcSpeedometer({
           )
         })}
 
-        {/* Needle */}
-        <motion.g style={{ transformOrigin: "80px 80px", rotate: rotation }}>
+        {/* Needle — transformBox:view-box keeps the pivot at SVG (80,80) at any rendered size */}
+        <motion.g style={{ transformBox: "view-box", transformOrigin: "50% 50%", rotate: rotation }}>
           <line x1="80" y1="80" x2="80" y2="27"
             stroke={accentColor} strokeWidth={2} strokeLinecap="round" />
           <line x1="80" y1="80" x2="80" y2="94"

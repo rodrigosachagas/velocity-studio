@@ -23,15 +23,16 @@
     "@tauri-apps/plugin-shell": "^2.2.0",
     "@velocity/shared": "workspace:*",
     "@velocity/telemetry": "workspace:*",
+    "@velocity/templates": "workspace:*",
     "@velocity/timeline": "workspace:*",
     "@velocity/widgets": "workspace:*",
-    "@velocity/templates": "workspace:*",
     "framer-motion": "^12.10.0",
+    "html-to-image": "^1.11.13",
     "maplibre-gl": "^4.7.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zustand": "^5.0.3",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.3.1",

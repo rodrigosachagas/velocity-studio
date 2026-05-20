@@ -1,7 +1,7 @@
 import { create } from "zustand"
 
 export type AppView = "welcome" | "editor" | "export"
-export type PanelSection = "layers" | "inspector" | "templates" | "widgets"
+export type PanelSection = "layers" | "inspector" | "templates" | "widgets" | "telemetry"
 
 interface AppStore {
   view: AppView
@@ -12,6 +12,12 @@ interface AppStore {
   showGrid: boolean
   showGuides: boolean
   zoom: number
+  /** Current video playback position in seconds — updated directly by VideoPreview via RAF */
+  videoCurrentTime: number
+  /** Measured CSS pixel dimensions of the canvas preview frame (the inner scaled div) */
+  canvasSize: { width: number; height: number } | null
+  /** Whether the user is in "click to set start/finish line" mode */
+  isPickingStartFinish: boolean
 
   setView: (view: AppView) => void
   setActivePanel: (panel: PanelSection) => void
@@ -21,6 +27,9 @@ interface AppStore {
   toggleGrid: () => void
   toggleGuides: () => void
   setZoom: (zoom: number) => void
+  setVideoCurrentTime: (t: number) => void
+  setCanvasSize: (size: { width: number; height: number }) => void
+  setPickingStartFinish: (v: boolean) => void
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -32,6 +41,9 @@ export const useAppStore = create<AppStore>((set) => ({
   showGrid: false,
   showGuides: true,
   zoom: 1,
+  videoCurrentTime: 0,
+  canvasSize: null,
+  isPickingStartFinish: false,
 
   setView: (view) => set({ view }),
   setActivePanel: (panel) => set({ activePanel: panel }),
@@ -41,4 +53,7 @@ export const useAppStore = create<AppStore>((set) => ({
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleGuides: () => set((s) => ({ showGuides: !s.showGuides })),
   setZoom: (zoom) => set({ zoom }),
+  setVideoCurrentTime: (videoCurrentTime) => set({ videoCurrentTime }),
+  setCanvasSize: (canvasSize) => set({ canvasSize }),
+  setPickingStartFinish: (isPickingStartFinish) => set({ isPickingStartFinish }),
 }))

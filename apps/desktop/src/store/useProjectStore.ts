@@ -32,6 +32,8 @@ interface ProjectStore {
   applyTemplate: (template: Template) => void
 
   setTimelineDuration: (duration: number) => void
+  setStartFinishLine: (lat: number, lon: number) => void
+  clearStartFinishLine: () => void
 }
 
 const defaultTimeline = () => ({
@@ -83,6 +85,7 @@ export const useProjectStore = create<ProjectStore>()(
             ? {
                 ...s.project,
                 video: video.metadata,
+                telemetry: undefined,   // always clear stale telemetry from previous video
                 timeline: { ...s.project.timeline, duration: video.metadata.duration },
               }
             : null,
@@ -200,6 +203,18 @@ export const useProjectStore = create<ProjectStore>()(
           project: s.project
             ? { ...s.project, timeline: { ...s.project.timeline, duration } }
             : null,
+        })),
+
+      setStartFinishLine: (lat, lon) =>
+        set((s) => ({
+          project: s.project ? { ...s.project, startFinishLine: { lat, lon } } : null,
+          isDirty: true,
+        })),
+
+      clearStartFinishLine: () =>
+        set((s) => ({
+          project: s.project ? { ...s.project, startFinishLine: undefined } : null,
+          isDirty: true,
         })),
     })),
     { name: "velocity-project" }

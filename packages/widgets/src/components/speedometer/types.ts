@@ -10,6 +10,26 @@ export type SpeedometerVariant =
   | "radial"
   | "tape"
   | "split"
+  // Circular variants SC01–SC20
+  | "classic"
+  | "thin-ring"
+  | "led"
+  | "dual-ring"
+  | "ticks"
+  | "invert"
+  | "conic"
+  | "half-moon"
+  | "triple"
+  | "dots"
+  | "analog"
+  | "numerals"
+  | "notched"
+  | "glow"
+  | "step-blocks"
+  | "redline"
+  | "heat"
+  | "mirror"
+  | "cyber"
 
 export interface SpeedometerProps {
   speed?: number

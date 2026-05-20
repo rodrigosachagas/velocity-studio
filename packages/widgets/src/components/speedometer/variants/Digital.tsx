@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { motion, useSpring } from "framer-motion"
 import { metersPerSecondTo } from "@velocity/shared"
+import { useExportMode } from "../../../contexts/ExportModeContext"
 import type { SpeedometerProps } from "../types"
 
 export function DigitalSpeedometer({
@@ -14,8 +16,10 @@ export function DigitalSpeedometer({
   showLabel = true,
   label = "SPEED",
 }: SpeedometerProps) {
+  const isExport = useExportMode()
   const converted = metersPerSecondTo(speed, unit)
-  const springSpeed = useSpring(converted, { stiffness: 80, damping: 18 })
+  const springSpeed = useSpring(0, { stiffness: 80, damping: 18 })
+  useEffect(() => { isExport ? springSpeed.jump(converted) : springSpeed.set(converted) }, [converted, isExport])
   const progress = Math.min(converted / maxSpeed, 1)
 
   const bg =

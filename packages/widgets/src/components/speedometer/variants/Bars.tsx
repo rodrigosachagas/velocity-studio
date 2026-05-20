@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { motion, useSpring } from "framer-motion"
 import { metersPerSecondTo } from "@velocity/shared"
+import { useExportMode } from "../../../contexts/ExportModeContext"
 import type { SpeedometerProps } from "../types"
 
 export function BarsSpeedometer({
@@ -15,8 +17,10 @@ export function BarsSpeedometer({
   showLabel = false,
   tickCount = 20,
 }: SpeedometerProps) {
+  const isExport = useExportMode()
   const converted = metersPerSecondTo(speed, unit)
-  const springSpeed = useSpring(converted, { stiffness: 100, damping: 18 })
+  const springSpeed = useSpring(0, { stiffness: 100, damping: 18 })
+  useEffect(() => { isExport ? springSpeed.jump(converted) : springSpeed.set(converted) }, [converted, isExport])
   const progress = Math.min(converted / maxSpeed, 1)
   const filledBars = Math.round(progress * tickCount)
 

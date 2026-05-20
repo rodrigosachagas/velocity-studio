@@ -7,6 +7,7 @@ export const WidgetTypeSchema = z.enum([
   "timer",
   "map",
   "route-trace",
+  "circuit-map",
   "g-force",
   "lean-angle",
   "lap-timer",

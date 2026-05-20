@@ -2,7 +2,11 @@ import { useAppStore } from "@/store/useAppStore"
 import { useProjectStore } from "@/store/useProjectStore"
 import { Icon } from "@/components/ui/Icon"
 
-export function EditorToolbar() {
+interface EditorToolbarProps {
+  onExport?: () => void
+}
+
+export function EditorToolbar({ onExport }: EditorToolbarProps) {
   const showGrid = useAppStore((s) => s.showGrid)
   const showGuides = useAppStore((s) => s.showGuides)
   const toggleGrid = useAppStore((s) => s.toggleGrid)
@@ -73,7 +77,11 @@ export function EditorToolbar() {
       <div className="flex-1" />
 
       {/* Export button */}
-      <button className="flex items-center gap-1.5 btn-primary text-xs">
+      <button
+        onClick={onExport}
+        className="flex items-center gap-1.5 btn-primary text-xs"
+        title="Export video"
+      >
         <Icon name="export" size={13} />
         Export
       </button>

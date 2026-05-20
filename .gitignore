@@ -9,3 +9,8 @@ target
 .env.local
 *.log
 .DS_Store
+mp4/
+*.MP4
+*.mp4
+FEATURES.html
+apps/desktop/src-tauri/gen/

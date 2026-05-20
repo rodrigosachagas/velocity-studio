@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { motion, useSpring } from "framer-motion"
 import { metersPerSecondTo } from "@velocity/shared"
+import { useExportMode } from "../../../contexts/ExportModeContext"
 import type { SpeedometerProps } from "../types"
 
 export function HUDSpeedometer({
@@ -17,8 +19,10 @@ export function HUDSpeedometer({
   label = "SPD",
   tickCount = 20,
 }: SpeedometerProps) {
+  const isExport = useExportMode()
   const converted = metersPerSecondTo(speed, unit)
-  const springSpeed = useSpring(converted, { stiffness: 140, damping: 22 })
+  const springSpeed = useSpring(0, { stiffness: 140, damping: 22 })
+  useEffect(() => { isExport ? springSpeed.jump(converted) : springSpeed.set(converted) }, [converted, isExport])
   const progress = Math.min(converted / maxSpeed, 1)
 
   const bg = theme === "glass" ? "rgba(0,0,0,0.5)" :
@@ -82,7 +86,7 @@ export function HUDSpeedometer({
         )}
 
         {/* Progress ticks bar */}
-        <div style={{ flex: 1, display: "flex", gap: 2, alignItems: "center" }}>
+        <div style={{ flex: 1, display: "flex", gap: 2, alignItems: "center", position: "relative" }}>
           {Array.from({ length: tickCount }, (_, i) => {
             const pct = i / tickCount
             const isActive = pct < progress
@@ -97,11 +101,12 @@ export function HUDSpeedometer({
               }} />
             )
           })}
-          {/* Needle indicator */}
-          <motion.div animate={{ x: `${progress * 100}%` }} style={{
-            position: "absolute", width: 2, height: 22,
-            background: accentColor, borderRadius: 1,
-            boxShadow: `0 0 8px ${accentColor}`,
+          {/* Needle: left:% positions relative to parent width */}
+          <div style={{
+            position: "absolute", left: `${progress * 100}%`, transform: "translateX(-50%)",
+            width: 2, height: 22, background: accentColor, borderRadius: 1,
+            boxShadow: `0 0 8px ${accentColor}`, transition: "left 0.1s linear",
+            pointerEvents: "none",
           }} />
         </div>
       </div>

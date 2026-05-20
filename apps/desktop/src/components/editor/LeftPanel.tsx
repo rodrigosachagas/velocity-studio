@@ -6,9 +6,11 @@ import { getAllWidgets } from "@velocity/widgets"
 import { ALL_TEMPLATES } from "@velocity/templates"
 import { Icon } from "@/components/ui/Icon"
 import { VideoImportPanel } from "./VideoImportPanel"
+import { TelemetryPanel } from "./TelemetryPanel"
 
 const PANEL_TABS: { id: PanelSection; label: string; icon: string }[] = [
   { id: "widgets", label: "Widgets", icon: "layers" },
+  { id: "telemetry", label: "GPS", icon: "activity" },
   { id: "layers", label: "Layers", icon: "eye" },
   { id: "templates", label: "Templates", icon: "template" },
 ]
@@ -44,6 +46,7 @@ export function LeftPanel() {
       <div className="flex-1 overflow-y-auto">
         <AnimatePresence mode="wait">
           {activePanel === "widgets" && <WidgetsPanelContent key="widgets" />}
+          {activePanel === "telemetry" && <TelemetryPanel key="telemetry" />}
           {activePanel === "layers" && <LayersPanelContent key="layers" />}
           {activePanel === "templates" && <TemplatesPanelContent key="templates" />}
         </AnimatePresence>
@@ -54,7 +57,11 @@ export function LeftPanel() {
 
 function WidgetsPanelContent() {
   const addWidget = useProjectStore((s) => s.addWidget)
+  const project = useProjectStore((s) => s.project)
   const allWidgets = getAllWidgets()
+
+  const videoWidth = project?.video?.width ?? 1920
+  const videoHeight = project?.video?.height ?? 1080
 
   const categories = ["telemetry", "navigation", "timing", "media"] as const
   const [expanded, setExpanded] = useState<string>("telemetry")
@@ -97,10 +104,11 @@ function WidgetsPanelContent() {
                       onClick={() =>
                         addWidget({
                           type: w.meta.type,
-                          x: 40,
-                          y: 40,
-                          width: w.meta.defaultSize.width,
-                          height: w.meta.defaultSize.height,
+                          // Coordinates in video pixel space, scaled from 1920×1080 reference
+                          x: Math.round(videoWidth * 0.05),
+                          y: Math.round(videoHeight * 0.05),
+                          width: Math.round(w.meta.defaultSize.width * (videoWidth / 1920)),
+                          height: Math.round(w.meta.defaultSize.height * (videoHeight / 1080)),
                           rotation: 0,
                           scale: 1,
                           opacity: 1,

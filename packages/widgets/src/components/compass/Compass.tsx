@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { motion, useSpring } from "framer-motion"
 import { formatHeading } from "@velocity/shared"
+import { useExportMode } from "../../contexts/ExportModeContext"
 
 interface CompassProps {
   heading?: number
@@ -14,7 +16,21 @@ export function Compass({
   theme = "dark",
   size = 120,
 }: CompassProps) {
-  const springHeading = useSpring(heading, { stiffness: 80, damping: 15 })
+  const isExport = useExportMode()
+  const springHeading = useSpring(0, { stiffness: 80, damping: 15 })
+
+  useEffect(() => {
+    if (isExport) {
+      springHeading.jump(heading)
+    } else {
+      // Shortest-path rotation: avoid spinning through 360° at wrap boundaries
+      const current = springHeading.get()
+      let delta = heading - current
+      while (delta > 180) delta -= 360
+      while (delta < -180) delta += 360
+      springHeading.set(current + delta)
+    }
+  }, [heading, isExport])
 
   const bg =
     theme === "glass"
@@ -35,7 +51,7 @@ export function Compass({
         height: size,
         background: bg,
         borderRadius: "50%",
-        border: `1px solid rgba(255,255,255,0.08)`,
+        border: "1px solid rgba(255,255,255,0.08)",
         backdropFilter: "blur(12px)",
         display: "flex",
         alignItems: "center",
@@ -87,7 +103,7 @@ export function Compass({
           )
         })}
 
-        {/* Rotating needle */}
+        {/* Rotating needle — spring updated via useEffect */}
         <motion.g style={{ transformOrigin: "60px 60px", rotate: springHeading }}>
           <polygon
             points="60,20 56,60 64,60"

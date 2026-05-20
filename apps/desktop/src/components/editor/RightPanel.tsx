@@ -1,6 +1,8 @@
 import { useProjectStore } from "@/store/useProjectStore"
 import { Icon } from "@/components/ui/Icon"
 import { SpeedometerInspector } from "./SpeedometerInspector"
+import { CircuitMapInspector } from "./CircuitMapInspector"
+import { LapTimerInspector } from "./LapTimerInspector"
 import type { WidgetConfig } from "@velocity/shared"
 
 export function RightPanel() {
@@ -65,10 +67,22 @@ export function RightPanel() {
             <div className="h-px bg-white/[0.06]" />
           </>
         )}
+        {selectedWidget.type === "circuit-map" && (
+          <>
+            <CircuitMapInspector widget={selectedWidget} />
+            <div className="h-px bg-white/[0.06]" />
+          </>
+        )}
+        {selectedWidget.type === "lap-timer" && (
+          <>
+            <LapTimerInspector widget={selectedWidget} />
+            <div className="h-px bg-white/[0.06]" />
+          </>
+        )}
         <PositionSection widget={selectedWidget} onUpdate={updateWidget} />
         <SizeSection widget={selectedWidget} onUpdate={updateWidget} />
         <AppearanceSection widget={selectedWidget} onUpdate={updateWidget} />
-        {selectedWidget.type !== "speedometer" && (
+        {selectedWidget.type !== "speedometer" && selectedWidget.type !== "circuit-map" && (
           <StyleSection widget={selectedWidget} onUpdate={updateWidget} />
         )}
       </div>

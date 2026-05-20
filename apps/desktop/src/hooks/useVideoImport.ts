@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/useAppStore"
 import { nanoid } from "@velocity/shared"
 import type { VideoFile } from "@velocity/shared"
 import { isTauri, probeVideoElement, openBrowserFilePicker } from "@/lib/tauri"
+import { simulateTelemetry, normalizeTelemetry, computeSpeed, computeLeanAngle, extractGPMFFromFile } from "@velocity/telemetry"
 
 interface ImportState {
   isImporting: boolean
@@ -19,11 +20,29 @@ export function useVideoImport() {
   })
 
   const setVideo = useProjectStore((s) => s.setVideo)
+  const setTelemetry = useProjectStore((s) => s.setTelemetry)
   const createProject = useProjectStore((s) => s.createProject)
   const project = useProjectStore((s) => s.project)
 
-  /** Import from a native file path — only works inside Tauri */
-  const importFromPath = useCallback(async (filePath: string): Promise<VideoFile | null> => {
+  // Generate demo telemetry immediately after a non-GPMF video loads
+  const autoSimulate = useCallback((duration: number) => {
+    try {
+      const raw = simulateTelemetry({ duration, fps: 30, profile: "road" })
+      const withSpeed = computeSpeed(raw.frames)
+      const withLean = computeLeanAngle(withSpeed)
+      const normalized = normalizeTelemetry({ ...raw, frames: withLean }, {
+        smooth: true, smoothWindow: 5, resample: true, targetFps: 30,
+      })
+      setTelemetry(normalized)
+    } catch {
+      // silent — simulation failure shouldn't block video import
+    }
+  }, [setTelemetry])
+
+  /** Import from a native file path — only works inside Tauri.
+   *  blobUrlOverride: optional blob URL created from a File object (drag-drop case).
+   *  When provided, the video element uses it directly (no asset protocol needed). */
+  const importFromPath = useCallback(async (filePath: string, blobUrlOverride?: string): Promise<VideoFile | null> => {
     setState({ isImporting: true, error: null, progress: "Lendo metadados..." })
     try {
       const { invoke } = await import("@tauri-apps/api/core")
@@ -34,6 +53,11 @@ export function useVideoImport() {
       }>("probe_video", { path: filePath })
 
       const fileName = filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath
+
+      // GoPro filename pattern: treat as GPMF candidate even if probe missed the stream
+      const looksLikeGoPro = /^(GH|GX|GL|GP|GOPR)/i.test(fileName)
+      const hasGPMF = probeResult.has_gpmf || looksLikeGoPro
+
       const videoFile: VideoFile = {
         metadata: {
           id: nanoid("vid_"),
@@ -46,13 +70,44 @@ export function useVideoImport() {
           height: probeResult.height,
           codec: probeResult.codec,
           bitrate: probeResult.bitrate,
-          hasGPMF: probeResult.has_gpmf,
+          hasGPMF,
         },
+        // Use blob URL for video playback when available (drag-drop provides it)
+        blobUrl: blobUrlOverride,
       }
 
       if (!project) createProject()
       setVideo(videoFile)
       useAppStore.getState().setView("editor")
+
+      if (hasGPMF) {
+        setState({ isImporting: false, error: null, progress: "Extraindo telemetria GPMF..." })
+        try {
+          const { convertFileSrc } = await import("@tauri-apps/api/core")
+          const assetUrl = convertFileSrc(filePath)
+          const { extractGPMFFromUrl, computeSpeed, computeLeanAngle, normalizeTelemetry } = await import("@velocity/telemetry")
+          const track = await extractGPMFFromUrl(assetUrl, filePath)
+          if (track && track.frames.length > 0) {
+            const withSpeed = computeSpeed(track.frames)
+            const withLean = computeLeanAngle(withSpeed)
+            const normalized = normalizeTelemetry({ ...track, frames: withLean }, {
+              smooth: true, smoothWindow: 5, resample: true, targetFps: 30,
+            })
+            setTelemetry(normalized)
+          } else {
+            setState({ isImporting: false, error: "GPMF encontrado mas sem frames GPS. Usando simulação.", progress: null })
+            autoSimulate(probeResult.duration)
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setState({ isImporting: false, error: `Extração GPMF falhou: ${msg}. Usando simulação.`, progress: null })
+          autoSimulate(probeResult.duration)
+          return videoFile
+        }
+      } else {
+        autoSimulate(probeResult.duration)
+      }
+
       setState({ isImporting: false, error: null, progress: null })
       return videoFile
     } catch (err) {
@@ -60,7 +115,7 @@ export function useVideoImport() {
       setState({ isImporting: false, error: message, progress: null })
       return null
     }
-  }, [setVideo, createProject, project])
+  }, [setVideo, setTelemetry, createProject, project, autoSimulate])
 
   /** Import from a browser File object — works in Vite dev mode (no Tauri needed) */
   const importFromFile = useCallback(async (file: File): Promise<VideoFile | null> => {
@@ -68,6 +123,9 @@ export function useVideoImport() {
     try {
       const meta = await probeVideoElement(file)
       const blobUrl = URL.createObjectURL(file)
+
+      // Detect GoPro by filename: GH/GX/GL/GP prefix covers all Hero/Max/Live models
+      const isGoPro = /^(GH|GX|GL|GP|GOPR)/i.test(file.name)
 
       const videoFile: VideoFile = {
         metadata: {
@@ -80,7 +138,7 @@ export function useVideoImport() {
           width: meta.width,
           height: meta.height,
           codec: file.type || "video/mp4",
-          hasGPMF: false,
+          hasGPMF: isGoPro,
         },
         blobUrl,
       }
@@ -88,6 +146,28 @@ export function useVideoImport() {
       if (!project) createProject()
       setVideo(videoFile)
       useAppStore.getState().setView("editor")
+
+      if (isGoPro) {
+        // Try to extract real GPMF from the file in the browser
+        setState({ isImporting: false, error: null, progress: "Extraindo telemetria GPMF..." })
+        try {
+          const track = await extractGPMFFromFile(file)
+          if (track && track.frames.length > 0) {
+            const withSpeed = computeSpeed(track.frames)
+            const withLean = computeLeanAngle(withSpeed)
+            const normalized = normalizeTelemetry({ ...track, frames: withLean }, { smooth: true, smoothWindow: 5, resample: true, targetFps: 30 })
+            setTelemetry(normalized)
+          } else {
+            // GPMF found by filename but extraction yielded no frames — fall back
+            autoSimulate(meta.duration)
+          }
+        } catch {
+          autoSimulate(meta.duration)
+        }
+      } else {
+        autoSimulate(meta.duration)
+      }
+
       setState({ isImporting: false, error: null, progress: null })
       return videoFile
     } catch (err) {
@@ -95,7 +175,7 @@ export function useVideoImport() {
       setState({ isImporting: false, error: `Erro ao ler vídeo: ${message}`, progress: null })
       return null
     }
-  }, [setVideo, createProject, project])
+  }, [setVideo, setTelemetry, createProject, project, autoSimulate])
 
   /** Unified drop handler — works in both Tauri and browser */
   const importFromDrop = useCallback(async (files: FileList | File[]): Promise<VideoFile | null> => {
@@ -109,7 +189,10 @@ export function useVideoImport() {
     if (isTauri()) {
       // In Tauri, File objects exposed via drag-drop have a .path property
       const path = (videoFile as File & { path?: string }).path
-      if (path) return importFromPath(path)
+      if (path) {
+        const blobUrl = URL.createObjectURL(videoFile)
+        return importFromPath(path, blobUrl)
+      }
     }
 
     return importFromFile(videoFile)

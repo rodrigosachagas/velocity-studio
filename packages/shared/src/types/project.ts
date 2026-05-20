@@ -27,6 +27,7 @@ export const ProjectSchema = z.object({
   timeline: TimelineStateSchema,
   exportSettings: ExportSettingsSchema.optional(),
   templateId: z.string().optional(),
+  startFinishLine: z.object({ lat: z.number(), lon: z.number() }).optional(),
 })
 
 export type Project = z.infer<typeof ProjectSchema>

@@ -64,11 +64,13 @@ pub async fn probe_video(
         .and_then(|b| b.parse::<u64>().ok());
 
     // Check for GoPro GPMF data stream
+    // "gpmd" is the correct codec_tag_string for GoPro telemetry (not "GoPr")
     let has_gpmf = json["streams"]
         .as_array()
         .map(|s| {
             s.iter().any(|st| {
-                st["codec_tag_string"] == "GoPr"
+                st["codec_tag_string"] == "gpmd"
+                    || st["codec_tag_string"] == "GoPr"
                     || st["codec_name"].as_str() == Some("bin_data")
                     || st["tags"]["handler_name"]
                         .as_str()

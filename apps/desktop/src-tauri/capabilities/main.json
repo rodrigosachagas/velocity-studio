@@ -7,6 +7,12 @@
     "core:default",
     "dialog:default",
     "fs:default",
+    "fs:allow-mkdir",
+    "fs:allow-write-file",
+    "fs:allow-read-file",
+    "fs:scope-temp-recursive",
+    "fs:scope-home-recursive",
+    "fs:scope-download-recursive",
     "shell:default"
   ]
 }

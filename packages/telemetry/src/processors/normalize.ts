@@ -7,14 +7,28 @@ export interface NormalizeOptions {
   resample?: boolean
   targetFps?: number
   offsetMs?: number
+  /** Max plausible speed in m/s — default 100 (360 kph) */
+  maxSpeedMs?: number
+  /** Max plausible acceleration in m/s² — default 20 (~2g) */
+  maxAccelMs2?: number
+  /** Zero out speeds below this threshold (GPS drift) — default 0.3 m/s (~1 kph) */
+  lowSpeedThresholdMs?: number
 }
 
 export function normalizeTelemetry(
   track: TelemetryTrack,
   options: NormalizeOptions = {}
 ): TelemetryTrack {
-  const { smooth = true, smoothWindow = 5, resample = true, targetFps = 30, offsetMs = 0 } =
-    options
+  const {
+    smooth = true,
+    smoothWindow = 5,
+    resample = true,
+    targetFps = 30,
+    offsetMs = 0,
+    maxSpeedMs = 100,
+    maxAccelMs2 = 20,
+    lowSpeedThresholdMs = 0.3,
+  } = options
 
   let frames = track.frames
 
@@ -24,6 +38,10 @@ export function normalizeTelemetry(
 
   frames = deduplicateFrames(frames)
   frames = frames.sort((a, b) => a.timestamp - b.timestamp)
+
+  // Remove physically impossible speed spikes before any smoothing
+  frames = filterSpeedOutliers(frames, maxSpeedMs, maxAccelMs2)
+  frames = clampLowSpeed(frames, lowSpeedThresholdMs)
 
   if (smooth) {
     frames = smoothTelemetry(frames, smoothWindow)
@@ -51,6 +69,87 @@ function deduplicateFrames(frames: TelemetryFrame[]): TelemetryFrame[] {
     seen.add(f.timestamp)
     return true
   })
+}
+
+/**
+ * Remove GPS speed spikes that are physically impossible.
+ * Strategy: median filter (window 3) then plausibility clamp.
+ * Handles:
+ *   - Hard cap at maxSpeedMs (e.g. 100 m/s = 360 kph)
+ *   - Acceleration clamp: speed change > maxAccelMs2 × Δt → clamp to previous
+ *   - Isolated spikes: if a single sample is >> neighbours, replace with neighbour avg
+ */
+export function filterSpeedOutliers(
+  frames: TelemetryFrame[],
+  maxSpeedMs = 100,
+  maxAccelMs2 = 20
+): TelemetryFrame[] {
+  if (frames.length < 3) return frames
+
+  // Pass 1: hard cap + isolated spike removal (median-of-3)
+  const pass1 = frames.map((f, i) => {
+    if (f.speed === undefined) return f
+    let s = f.speed
+
+    // Hard cap
+    if (s > maxSpeedMs) s = frames[i - 1]?.speed ?? 0
+
+    // Isolated spike: compare to neighbours
+    const prev = frames[i - 1]?.speed
+    const next = frames[i + 1]?.speed
+    if (prev !== undefined && next !== undefined) {
+      const median = [prev, s, next].sort((a, b) => a - b)[1]!
+      // If this value is > 3× the median of the triplet and > 5 m/s above both neighbours
+      if (s > median * 2 && s - prev > 5 && s - next > 5) {
+        s = (prev + next) / 2
+      }
+    }
+
+    return s === f.speed ? f : { ...f, speed: s }
+  })
+
+  // Pass 2: acceleration plausibility clamp
+  const pass2: TelemetryFrame[] = []
+  for (let i = 0; i < pass1.length; i++) {
+    const f = pass1[i]!
+    if (f.speed === undefined || i === 0) {
+      pass2.push(f)
+      continue
+    }
+    const prev = pass2[i - 1]!
+    if (prev.speed === undefined) { pass2.push(f); continue }
+
+    const dt = (f.timestamp - prev.timestamp) / 1000 // seconds
+    if (dt <= 0) { pass2.push(f); continue }
+
+    const maxDelta = maxAccelMs2 * dt
+    const actualDelta = Math.abs(f.speed - prev.speed)
+
+    if (actualDelta > maxDelta) {
+      // Clamp the speed to the max physically plausible change
+      const sign = f.speed > prev.speed ? 1 : -1
+      pass2.push({ ...f, speed: prev.speed + sign * maxDelta })
+    } else {
+      pass2.push(f)
+    }
+  }
+
+  return pass2
+}
+
+/**
+ * Zero out speeds below threshold to remove GPS drift noise when stationary.
+ * GPS chips report ~0.2–0.5 m/s "movement" even when completely stopped.
+ */
+export function clampLowSpeed(
+  frames: TelemetryFrame[],
+  thresholdMs = 0.3
+): TelemetryFrame[] {
+  return frames.map((f) =>
+    f.speed !== undefined && f.speed < thresholdMs
+      ? { ...f, speed: 0 }
+      : f
+  )
 }
 
 export function computeSpeed(frames: TelemetryFrame[]): TelemetryFrame[] {

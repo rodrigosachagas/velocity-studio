@@ -1,5 +1,7 @@
+import { useEffect } from "react"
 import { motion, useSpring } from "framer-motion"
 import { metersPerSecondTo } from "@velocity/shared"
+import { useExportMode } from "../../../contexts/ExportModeContext"
 import type { SpeedometerProps } from "../types"
 
 export function TapeSpeedometer({
@@ -12,9 +14,16 @@ export function TapeSpeedometer({
   height = 200,
   showUnit = true,
 }: SpeedometerProps) {
+  const isExport = useExportMode()
   const converted = metersPerSecondTo(speed, unit)
-  const springSpeed = useSpring(converted, { stiffness: 60, damping: 18 })
-  const progress = Math.min(converted / maxSpeed, 1)
+
+  // Number of visible tape steps
+  const totalSteps = 20
+
+  // springY drives the tape scroll; extracted from JSX so jump() works in export mode
+  const yTarget = -((converted / maxSpeed) * (height * (totalSteps / 4)))
+  const springY = useSpring(0, { stiffness: 60, damping: 18 })
+  useEffect(() => { isExport ? springY.jump(yTarget) : springY.set(yTarget) }, [yTarget, isExport])
 
   const bg = theme === "glass" ? "rgba(0,0,0,0.7)" :
     theme === "light" ? "rgba(245,248,255,0.97)" :
@@ -22,9 +31,6 @@ export function TapeSpeedometer({
   const textColor = theme === "light" ? "#111" : "#fff"
   const mutedColor = theme === "light" ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.25)"
   const dimColor = theme === "light" ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.05)"
-
-  // Number of visible tape steps
-  const totalSteps = 20
   const stepSize = maxSpeed / totalSteps
 
   // The tape scrolls: center = current speed
@@ -76,10 +82,7 @@ export function TapeSpeedometer({
       <motion.div style={{
         position: "absolute",
         top: "50%",
-        y: useSpring(
-          -((converted / maxSpeed) * (height * (totalSteps / 4))),
-          { stiffness: 60, damping: 18 }
-        ),
+        y: springY,
         transformOrigin: "top",
         display: "flex", flexDirection: "column-reverse",
         alignItems: "flex-end",
