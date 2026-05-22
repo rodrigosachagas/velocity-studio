@@ -1,11 +1,13 @@
 import { useState, useRef } from "react"
-import { toPng, getFontEmbedCSS } from "html-to-image"
+import { toCanvas, getFontEmbedCSS } from "html-to-image"
 import { flushSync } from "react-dom"
 import { isTauri } from "@/lib/tauri"
 
 export interface ExportSettings {
   codec: "h264" | "h265" | "prores"
   crf: number
+  /** Explicit output FPS — undefined means match the source video's native FPS */
+  outputFps?: number
   /** Cap export to this many seconds — useful for quick test renders */
   maxDuration?: number
 }
@@ -17,6 +19,18 @@ export interface ExportState {
   progress: number
   outputPath: string | null
   error: string | null
+  /** Diagnostic log entries — populated on error so the user can share them */
+  logs: string[]
+}
+
+/** Encode a Uint8Array to base64 in chunks to avoid call-stack limits. */
+function toBase64(bytes: Uint8Array): string {
+  let str = ""
+  const chunk = 32768
+  for (let i = 0; i < bytes.length; i += chunk) {
+    str += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(str)
 }
 
 export function useExport() {
@@ -27,32 +41,33 @@ export function useExport() {
     progress: 0,
     outputPath: null,
     error: null,
+    logs: [],
   })
   const cancelRef = useRef(false)
+  const logsRef = useRef<string[]>([])
+
+  const log = (msg: string) => {
+    const entry = `[${new Date().toISOString().slice(11, 23)}] ${msg}`
+    console.log("[export]", msg)
+    logsRef.current.push(entry)
+  }
 
   const startExport = async (
     overlayRef: React.RefObject<HTMLDivElement | null>,
     setOverlayTime: (t: number) => void,
     options: ExportSettings & {
       videoPath: string
-      /** Native file paths for multi-segment export (replaces videoPath) */
       segmentPaths?: string[]
       fps: number
       duration: number
       videoWidth: number
       videoHeight: number
-      /** Trim start in seconds — skips this many seconds from the beginning */
       trimStart?: number
-      /** Trim end in seconds — export ends at this point in the global timeline */
       trimEnd?: number
     }
   ) => {
     if (!isTauri()) {
-      setState((s) => ({
-        ...s,
-        phase: "error",
-        error: "Export requires the desktop app (Tauri). Running in browser mode.",
-      }))
+      setState((s) => ({ ...s, phase: "error", error: "Export requires the desktop app (Tauri).", logs: [] }))
       return
     }
 
@@ -63,138 +78,192 @@ export function useExport() {
       setState((s) => ({
         ...s,
         phase: "error",
-        error: "Cannot export: video was loaded via browser file picker. Re-open the app via Tauri and load the video with the native file picker.",
+        error: "Cannot export: video was loaded via browser file picker. Use the native file picker.",
+        logs: [],
       }))
       return
     }
 
     cancelRef.current = false
+    logsRef.current = []
+
+    log(`Starting export — codec=${options.codec} crf=${options.crf} res=${options.videoWidth}x${options.videoHeight} fps=${options.fps}`)
+    log(`Segments=${isMultiSeg ? options.segmentPaths!.length : 1} duration=${options.duration.toFixed(2)}s`)
+
+    // Screen wake lock — keeps display on so requestAnimationFrame keeps firing
+    let wakeLock: WakeLockSentinel | null = null
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLock = await navigator.wakeLock.request("screen")
+        log("Wake lock acquired")
+      }
+    } catch (e) {
+      log(`Wake lock unavailable: ${e}`)
+    }
+
+    const releaseWakeLock = () => { wakeLock?.release().catch(() => {}) }
 
     try {
-      // Dynamic imports — Tauri APIs are only available inside the Tauri runtime
       const { save } = await import("@tauri-apps/plugin-dialog")
-      const { mkdir, writeFile } = await import("@tauri-apps/plugin-fs")
-      const { tempDir } = await import("@tauri-apps/api/path")
       const { invoke } = await import("@tauri-apps/api/core")
 
+      const isProRes = options.codec === "prores"
       const outputPath = await save({
-        defaultPath: "output.mp4",
-        filters: [{ name: "Video", extensions: ["mp4"] }],
+        defaultPath: isProRes ? "output.mov" : "output.mp4",
+        filters: isProRes
+          ? [{ name: "ProRes Video", extensions: ["mov"] }]
+          : [{ name: "Video", extensions: ["mp4"] }],
       })
-      if (!outputPath) return
+      if (!outputPath) { releaseWakeLock(); return }
+
+      log(`Output path: ${outputPath}`)
 
       const fps = options.fps
       const trimStart = options.trimStart ?? 0
       const trimEnd = options.trimEnd ?? options.duration
       const trimmedDuration = trimEnd - trimStart
-      const baseDuration = options.maxDuration
+      const effectiveDuration = options.maxDuration
         ? Math.min(trimmedDuration, options.maxDuration)
         : trimmedDuration
-      const effectiveDuration = baseDuration
-      const totalFrames = Math.ceil(effectiveDuration * fps)
-      setState({ phase: "rendering", currentFrame: 0, totalFrames, progress: 0, outputPath, error: null })
 
-      // Create temp dir for overlay PNG frames
-      const tmp = await tempDir()
-      const framesDir = `${tmp}/velocity_export_${Date.now()}`
-      await mkdir(framesDir, { recursive: true })
+      const OVERLAY_FPS = 15
+      const totalFrames = Math.ceil(effectiveDuration * OVERLAY_FPS)
 
-      // Pre-embed fonts once — html-to-image fetches font URLs on every toPng call
-      // by default; doing it upfront cuts ~30–40% of per-frame rendering time.
+      log(`Total frames=${totalFrames} overlayFps=${OVERLAY_FPS} trimStart=${trimStart.toFixed(2)} effectiveDuration=${effectiveDuration.toFixed(2)}`)
+
+      setState({ phase: "rendering", currentFrame: 0, totalFrames, progress: 0, outputPath, error: null, logs: [] })
+
+      // Pre-embed fonts once
       let fontEmbedCSS: string | undefined
       if (overlayRef.current) {
-        try { fontEmbedCSS = await getFontEmbedCSS(overlayRef.current) } catch { /* optional */ }
+        try {
+          fontEmbedCSS = await getFontEmbedCSS(overlayRef.current)
+          log(`Font CSS embedded (${fontEmbedCSS?.length ?? 0} bytes)`)
+        } catch (e) {
+          log(`Font embed failed (non-fatal): ${e}`)
+        }
       }
 
-      // Disk writes are pipelined: we fire each write and move on to the next frame.
-      // At most WRITE_WINDOW writes are in-flight at once to cap memory pressure.
-      const WRITE_WINDOW = 6
-      const pendingWrites: Promise<void>[] = []
-
-      // Frame capture loop
-      for (let i = 0; i < totalFrames; i++) {
-        if (cancelRef.current) {
-          await Promise.allSettled(pendingWrites)
-          setState((s) => ({ ...s, phase: "idle" }))
-          return
-        }
-
-        const time = trimStart + i / fps
-
-        // Synchronous React re-render so widget props update before capture
-        flushSync(() => setOverlayTime(time))
-
-        // One rAF is enough: spring.jump() applies instantly (no animation queued)
-        await new Promise<void>((r) => requestAnimationFrame(() => r()))
-
-        if (!overlayRef.current) continue
-
-        // Capture the overlay as a transparent PNG
-        const dataUrl = await toPng(overlayRef.current, {
-          backgroundColor: undefined,
-          pixelRatio: 1,
-          width: options.videoWidth,
-          height: options.videoHeight,
-          fontEmbedCSS,
-        })
-
-        // Decode base64 → binary
-        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1)
-        const binary = atob(base64)
-        const bytes = new Uint8Array(binary.length)
-        for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j)
-
-        const frameNum = String(i).padStart(5, "0")
-
-        // Fire write without awaiting — overlaps disk I/O with next frame render
-        const writePromise = writeFile(`${framesDir}/frame_${frameNum}.png`, bytes)
-        pendingWrites.push(writePromise)
-        if (pendingWrites.length >= WRITE_WINDOW) {
-          await pendingWrites.splice(0, 1)[0]
-        }
-
-        setState((s) => ({
-          ...s,
-          currentFrame: i + 1,
-          progress: ((i + 1) / totalFrames) * 0.8,
-        }))
-      }
-
-      // Drain remaining writes before handing off to ffmpeg
-      await Promise.all(pendingWrites)
-
-      if (cancelRef.current) return
-
-      // FFmpeg: composite overlay frames onto the original video
-      setState((s) => ({ ...s, phase: "encoding", progress: 0.82 }))
-
-      await invoke("render_video", {
+      // Start FFmpeg (reads overlay frames from stdin via image2pipe — no disk)
+      log("Calling start_pipe_export…")
+      await invoke("start_pipe_export", {
         options: {
           input_path: isMultiSeg ? primaryPath : options.videoPath,
           input_paths: isMultiSeg ? options.segmentPaths : null,
-          overlay_frames_dir: framesDir,
           output_path: outputPath,
           width: options.videoWidth,
           height: options.videoHeight,
           fps,
+          overlay_fps: OVERLAY_FPS,
+          output_fps: options.outputFps ?? null,
           codec: options.codec,
           crf: options.crf,
           max_duration_seconds: options.maxDuration ?? null,
           trim_start: trimStart > 0 ? trimStart : null,
-          trim_duration: trimmedDuration < (options.duration) ? trimmedDuration : null,
+          trim_duration: trimmedDuration < options.duration ? trimmedDuration : null,
         },
       })
+      log("FFmpeg started successfully")
 
-      setState({
-        phase: "done",
-        currentFrame: totalFrames,
-        totalFrames,
-        progress: 1,
-        outputPath,
-        error: null,
-      })
+      let lastBytes: Uint8Array | null = null
+      let captureFailures = 0
+      let captureFallbacks = 0
+      let captureSkips = 0
+
+      // Frame capture loop — no filesystem writes
+      for (let i = 0; i < totalFrames; i++) {
+        if (cancelRef.current) {
+          await invoke("cancel_render")
+          setState((s) => ({ ...s, phase: "idle" }))
+          releaseWakeLock()
+          return
+        }
+
+        const time = trimStart + i / OVERLAY_FPS
+        flushSync(() => setOverlayTime(time))
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+
+        if (!overlayRef.current) {
+          log(`Frame ${i}: overlayRef is null, skipping`)
+          captureSkips++
+          continue
+        }
+
+        let bytes: Uint8Array | null = null
+        try {
+          const canvas = await toCanvas(overlayRef.current, {
+            backgroundColor: undefined,
+            pixelRatio: 1,
+            width: options.videoWidth,
+            height: options.videoHeight,
+            fontEmbedCSS,
+          })
+          const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"))
+          canvas.width = 0  // free canvas backing store (~30 MB for 4K)
+          if (blob) {
+            bytes = new Uint8Array(await blob.arrayBuffer())
+            lastBytes = bytes
+          } else {
+            log(`Frame ${i}: toBlob returned null`)
+            captureFailures++
+          }
+        } catch (frameErr) {
+          const msg = `Frame ${i}: toCanvas failed — ${frameErr}`
+          console.warn(msg)
+          log(msg)
+          captureFailures++
+        }
+
+        const frameData = bytes ?? lastBytes
+        if (!frameData) {
+          captureSkips++
+          if (i === 0) log("Frame 0: no frame data and no fallback — first capture failed completely")
+          continue
+        }
+        if (!bytes && lastBytes) captureFallbacks++
+
+        // Send frame bytes directly to Rust via base64 IPC — zero disk writes
+        const b64 = toBase64(frameData)
+        await invoke("pipe_frame_base64", { data: b64 })
+
+        setState((s) => ({
+          ...s,
+          currentFrame: i + 1,
+          progress: ((i + 1) / totalFrames) * 0.95,
+        }))
+
+        // GC yield every 50 frames
+        if (i % 50 === 49) await new Promise<void>((r) => setTimeout(r, 30))
+      }
+
+      log(`Frame loop done — success=${totalFrames - captureFailures - captureSkips} failures=${captureFailures} fallbacks=${captureFallbacks} skips=${captureSkips}`)
+
+      if (cancelRef.current) {
+        await invoke("cancel_render")
+        setState((s) => ({ ...s, phase: "idle" }))
+        releaseWakeLock()
+        return
+      }
+
+      setState((s) => ({ ...s, phase: "encoding", progress: 0.96 }))
+      log("Calling finish_pipe_export…")
+      await invoke("finish_pipe_export")
+      log("Encoding complete!")
+
+      setState({ phase: "done", currentFrame: totalFrames, totalFrames, progress: 1, outputPath, error: null, logs: [] })
     } catch (e) {
-      setState((s) => ({ ...s, phase: "error", error: String(e) }))
+      const detail = String(e)
+      const frameNum = state.currentFrame
+      const error = frameNum > 0 ? `Frame ${frameNum}: ${detail}` : detail
+      log(`FATAL ERROR: ${detail}`)
+      setState((s) => ({
+        ...s,
+        phase: "error",
+        error,
+        logs: [...logsRef.current],
+      }))
+    } finally {
+      releaseWakeLock()
     }
   }
 
@@ -208,7 +277,7 @@ export function useExport() {
   }
 
   const reset = () =>
-    setState({ phase: "idle", currentFrame: 0, totalFrames: 0, progress: 0, outputPath: null, error: null })
+    setState({ phase: "idle", currentFrame: 0, totalFrames: 0, progress: 0, outputPath: null, error: null, logs: [] })
 
   return { startExport, cancel, reset, state }
 }

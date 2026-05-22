@@ -10,6 +10,7 @@ interface TimelineStore {
   currentFrame: number
   isPlaying: boolean
   fps: number
+  seekVersion: number
 
   initEngine: (initialState?: Partial<TimelineState>, fps?: number) => void
   play: () => void
@@ -24,6 +25,8 @@ interface TimelineStore {
   removeLayer: (layerId: string) => void
   setDuration: (duration: number) => void
   destroy: () => void
+  /** Called by VideoPreview's RAF loop to keep currentTime in sync with actual video playback. */
+  reportPlaybackTime: (time: number) => void
 }
 
 export const useTimelineStore = create<TimelineStore>()(
@@ -34,6 +37,7 @@ export const useTimelineStore = create<TimelineStore>()(
     currentFrame: 0,
     isPlaying: false,
     fps: 30,
+    seekVersion: 0,
 
     initEngine: (initialState, fps = 30) => {
       const existing = get().engine
@@ -49,6 +53,7 @@ export const useTimelineStore = create<TimelineStore>()(
       })
       const unsubPlay = engine.on("playbackStart", () => set({ isPlaying: true }))
       const unsubStop = engine.on("playbackStop", () => set({ isPlaying: false }))
+      const unsubSeekVer = engine.on("seekVersion", ({ version }) => set({ seekVersion: version }))
 
       set({ engine, fps, state: engine.getState() as TimelineState })
 
@@ -57,10 +62,18 @@ export const useTimelineStore = create<TimelineStore>()(
         unsubFrame()
         unsubPlay()
         unsubStop()
+        unsubSeekVer()
       }
     },
 
-    play: () => get().engine?.play(),
+    play: () => {
+      const engine = get().engine
+      if (!engine) return
+      // Sync the engine's internal clock to the video's last reported time so
+      // end-of-playback detection fires at the right moment.
+      engine.syncTime(get().currentTime)
+      engine.play()
+    },
     pause: () => get().engine?.pause(),
     toggle: () => get().engine?.toggle(),
     seek: (time) => get().engine?.seek(time),
@@ -77,5 +90,7 @@ export const useTimelineStore = create<TimelineStore>()(
       get().engine?.destroy()
       set({ engine: null, state: null })
     },
+
+    reportPlaybackTime: (time) => set({ currentTime: time }),
   }))
 )

@@ -24,6 +24,10 @@ pub fn run() {
             commands::video::generate_proxy,
             commands::telemetry::extract_gpmf_raw,
             commands::telemetry::extract_exif,
+            commands::export::start_pipe_export,
+            commands::export::pipe_frame_base64,
+            commands::export::pipe_next_frame,
+            commands::export::finish_pipe_export,
             commands::export::render_video,
             commands::export::cancel_render,
         ])

@@ -12,6 +12,12 @@ export function ExportModal({ onClose }: ExportModalProps) {
   const project = useProjectStore((s) => s.project)
   const overlayRef = useRef<HTMLDivElement>(null)
   const [overlayTime, setOverlayTime] = useState(0)
+  const QUALITY_PRESETS = [
+    { id: "social", label: "Redes sociais", hint: "Compacto · WhatsApp, Instagram", crf: 26 },
+    { id: "high",   label: "Alta qualidade", hint: "Recomendado · YouTube, publicar", crf: 18 },
+    { id: "max",    label: "Máxima",         hint: "Arquivo grande · edição, arquivo", crf: 12 },
+  ] as const
+
   const [settings, setSettings] = useState<ExportSettings>({ codec: "h264", crf: 18 })
   const [testExport, setTestExport] = useState(false)
 
@@ -19,6 +25,8 @@ export function ExportModal({ onClose }: ExportModalProps) {
 
   if (!project) return null
   const video = project.video
+
+  const sourceFps = video ? Math.round(video.fps) : 30
 
   const isActive = state.phase === "rendering" || state.phase === "encoding"
   const isDone = state.phase === "done"
@@ -76,6 +84,8 @@ export function ExportModal({ onClose }: ExportModalProps) {
           videoWidth={video.width}
           videoHeight={video.height}
           startFinishLine={project.startFinishLine}
+          inPoint={inPoint}
+          outPoint={outPoint}
         />
       )}
 
@@ -107,7 +117,7 @@ export function ExportModal({ onClose }: ExportModalProps) {
               <InfoRow label="Arquivo" value={video.name} />
               <InfoRow label="Resolução" value={`${video.width}×${video.height}`} />
               <InfoRow label="Duração" value={`${video.duration.toFixed(1)}s`} />
-              <InfoRow label="FPS" value={String(video.fps)} />
+              <InfoRow label="FPS" value={`${sourceFps}fps`} />
               {project.telemetry && (
                 <InfoRow
                   label="Telemetria"
@@ -143,24 +153,57 @@ export function ExportModal({ onClose }: ExportModalProps) {
             </div>
           </div>
 
-          {/* Quality */}
+          {/* FPS */}
           <div className="space-y-2">
-            <div className="flex justify-between">
-              <label className="text-xs text-white/50">Qualidade (CRF)</label>
-              <span className="text-xs text-white/60">
-                {settings.crf} —{" "}
-                {settings.crf <= 18 ? "Alta" : settings.crf <= 23 ? "Média" : "Baixa"}
-              </span>
+            <label className="text-xs text-white/50">FPS de saída</label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { label: `Nativo · ${sourceFps}fps`, value: undefined },
+                ...(sourceFps > 30 ? [{ label: "30fps", value: 30 as number }] : []),
+                { label: "24fps", value: 24 as number },
+                ...(sourceFps < 60 ? [{ label: "60fps", value: 60 as number }] : []),
+              ] as { label: string; value: number | undefined }[]).map(({ label, value }) => (
+                <button
+                  key={label}
+                  disabled={isActive}
+                  onClick={() => setSettings((s) => ({ ...s, outputFps: value }))}
+                  className={`py-2 rounded-lg text-xs font-medium border transition-all ${
+                    settings.outputFps === value
+                      ? "bg-accent/20 border-accent/60 text-accent"
+                      : "bg-black/20 border-white/10 text-white/50 hover:border-white/20"
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <input
-              type="range"
-              min={12}
-              max={32}
-              value={settings.crf}
-              disabled={isActive}
-              onChange={(e) => setSettings((s) => ({ ...s, crf: +e.target.value }))}
-              className="w-full accent-accent disabled:opacity-40"
-            />
+          </div>
+
+          {/* Quality presets */}
+          <div className="space-y-2">
+            <label className="text-xs text-white/50">Qualidade</label>
+            <div className="grid grid-cols-3 gap-2">
+              {QUALITY_PRESETS.map((preset) => {
+                const active = settings.crf === preset.crf
+                return (
+                  <button
+                    key={preset.id}
+                    disabled={isActive}
+                    onClick={() => setSettings((s) => ({ ...s, crf: preset.crf }))}
+                    className={`py-2.5 px-3 rounded-lg text-left border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                      active
+                        ? "bg-accent/20 border-accent/60"
+                        : "bg-black/20 border-white/10 hover:border-white/20"
+                    }`}
+                  >
+                    <div className={`text-xs font-medium ${active ? "text-accent" : "text-white/70"}`}>
+                      {preset.label}
+                    </div>
+                    <div className="text-[10px] text-white/35 mt-0.5 leading-tight">{preset.hint}</div>
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* Progress */}
@@ -187,8 +230,28 @@ export function ExportModal({ onClose }: ExportModalProps) {
 
           {/* Error */}
           {isError && (
-            <div className="text-xs text-red-400 bg-red-400/10 rounded-lg p-3">
-              {state.error}
+            <div className="space-y-2">
+              <div className="text-xs text-red-400 bg-red-400/10 rounded-lg p-3 max-h-24 overflow-y-auto whitespace-pre-wrap break-all">
+                {state.error}
+              </div>
+              {state.logs.length > 0 && (
+                <details className="group">
+                  <summary className="text-xs text-white/30 cursor-pointer hover:text-white/50 select-none">
+                    Ver log de diagnóstico ({state.logs.length} entradas)
+                  </summary>
+                  <div className="mt-1.5 relative">
+                    <pre className="text-[10px] text-white/40 bg-black/40 rounded-lg p-3 max-h-40 overflow-y-auto leading-relaxed">
+                      {state.logs.join("\n")}
+                    </pre>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(state.logs.join("\n"))}
+                      className="absolute top-2 right-2 text-[10px] text-white/30 hover:text-white/60 bg-white/5 hover:bg-white/10 px-2 py-0.5 rounded"
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                </details>
+              )}
             </div>
           )}
 

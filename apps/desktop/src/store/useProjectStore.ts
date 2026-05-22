@@ -99,13 +99,19 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       setVideo: (video) => {
+        const dur = video.metadata.duration
         set((s) => ({
           project: s.project
             ? {
                 ...s.project,
                 video: video.metadata,
                 telemetry: undefined,   // always clear stale telemetry from previous video
-                timeline: { ...s.project.timeline, duration: video.metadata.duration },
+                timeline: {
+                  ...s.project.timeline,
+                  duration: dur,
+                  inPoint: 0,
+                  outPoint: dur,
+                },
               }
             : null,
           videoBlobUrl: video.blobUrl ?? null,
@@ -164,7 +170,12 @@ export const useProjectStore = create<ProjectStore>()(
               segments: sorted,
               video,
               telemetry: mergedTrack ?? s.project.telemetry,
-              timeline: { ...s.project.timeline, duration: totalDuration },
+              timeline: {
+                ...s.project.timeline,
+                duration: totalDuration,
+                inPoint: 0,
+                outPoint: totalDuration,
+              },
             },
             segmentTelemetries: allTelemetries,
             segmentBlobUrls: replace ? blobUrls : { ...s.segmentBlobUrls, ...blobUrls },

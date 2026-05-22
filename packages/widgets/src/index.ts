@@ -5,7 +5,7 @@ export { Altitude } from "./components/altitude/Altitude"
 export { GForce } from "./components/g-force/GForce"
 export { Timer } from "./components/timer/Timer"
 export { CircuitMap } from "./components/circuit-map/CircuitMap"
-export { LapTimer } from "./components/lap-timer/LapTimer"
+export { LapTimer, lapTimerIdealHeight } from "./components/lap-timer/LapTimer"
 
 export { registerWidget, getWidget, getAllWidgets, getWidgetsByCategory } from "./registry/widgetRegistry"
 export type { WidgetMeta, WidgetRenderer } from "./registry/widgetRegistry"

@@ -62,7 +62,7 @@ export function GForce({
         background: bg,
         borderRadius: "50%",
         border: "1px solid rgba(255,255,255,0.08)",
-        backdropFilter: "blur(12px)",
+        backdropFilter: isExport ? undefined : "blur(12px)",
         position: "relative",
         overflow: "hidden",
       }}

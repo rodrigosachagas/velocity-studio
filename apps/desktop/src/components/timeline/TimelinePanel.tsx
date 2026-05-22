@@ -45,6 +45,8 @@ export function TimelinePanel() {
   const [zoom, setZoom] = useState(1)
   const [scrollFrac, setScrollFrac] = useState(0)
   const [dragging, setDragging] = useState<"in" | "out" | null>(null)
+  const [isScrubbing, setIsScrubbing] = useState(false)
+  const scrubResumeRef = useRef(false)
 
   const scrubberRef = useRef<HTMLDivElement>(null)
   const tracksRef = useRef<HTMLDivElement>(null)
@@ -118,20 +120,38 @@ export function TimelinePanel() {
   const handleScrubDown = useCallback(
     (e: React.MouseEvent) => {
       if (dragging || e.button !== 0) return
+      // Pause during scrub so the video responds to seeks cleanly; resume on mouseup
+      scrubResumeRef.current = isPlaying
+      if (isPlaying) pause()
+      setIsScrubbing(true)
       const t = clientToTime(e.clientX)
       if (t !== null) seek(t)
     },
-    [seek, clientToTime, dragging],
+    [seek, clientToTime, dragging, isPlaying, pause],
   )
 
   const handleScrubMove = useCallback(
     (e: React.MouseEvent) => {
-      if (e.buttons !== 1 || dragging) return
+      if (e.buttons !== 1 || dragging || !isScrubbing) return
       const t = clientToTime(e.clientX)
       if (t !== null) seek(t)
     },
-    [seek, clientToTime, dragging],
+    [seek, clientToTime, dragging, isScrubbing],
   )
+
+  // Resume playback when scrub ends
+  useEffect(() => {
+    if (!isScrubbing) return
+    const onUp = () => {
+      setIsScrubbing(false)
+      if (scrubResumeRef.current) {
+        scrubResumeRef.current = false
+        play()
+      }
+    }
+    window.addEventListener("mouseup", onUp)
+    return () => window.removeEventListener("mouseup", onUp)
+  }, [isScrubbing, play])
 
   // ── trim dragging ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -160,7 +180,8 @@ export function TimelinePanel() {
   const playFrac = Math.max(0, Math.min(1, timeToFrac(currentTime)))
   const inFrac = inPoint != null ? timeToFrac(inPoint) : null
   const outFrac = outPoint != null ? timeToFrac(outPoint) : null
-  const hasTrim = inPoint != null || outPoint != null
+  // hasTrim = handles were moved away from the full extent
+  const hasTrim = (inPoint != null && inPoint > 0) || (outPoint != null && outPoint < duration)
 
   const zoomLabel = zoom === 1 ? "1×" : zoom < 1
     ? `${zoom.toFixed(1)}×`
@@ -169,92 +190,98 @@ export function TimelinePanel() {
   return (
     <div className="flex flex-col h-full bg-surface-50">
       {/* ── Controls ── */}
-      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/[0.07] flex-wrap">
-        {/* Playback */}
-        <button onClick={() => seek(0)} className="btn-ghost p-1.5" title="Início">
-          <Icon name="step-backward" size={13} />
-        </button>
-        <button onClick={() => stepBackward(1)} className="btn-ghost p-1.5" title="Frame anterior">
-          <Icon name="chevron_right" size={13} className="rotate-180" />
-        </button>
-        <button
-          onClick={() => (isPlaying ? pause() : play())}
-          className="w-7 h-7 rounded-full flex items-center justify-center bg-accent text-black hover:bg-accent/90 active:scale-95 transition-all shrink-0"
-        >
-          <Icon name={isPlaying ? "pause" : "play"} size={13} />
-        </button>
-        <button onClick={() => stepForward(1)} className="btn-ghost p-1.5" title="Próximo frame">
-          <Icon name="chevron_right" size={13} />
-        </button>
-        <button onClick={() => seek(duration)} className="btn-ghost p-1.5" title="Final">
-          <Icon name="step-forward" size={13} />
-        </button>
+      <div className="flex flex-col border-b border-white/[0.07]">
+        {/* Row 1: Playback + Timecode */}
+        <div className="flex items-center gap-1 px-3 py-1.5">
+          <button onClick={() => seek(0)} className="btn-ghost p-1.5" title="Início">
+            <Icon name="step-backward" size={13} />
+          </button>
+          <button onClick={() => stepBackward(1)} className="btn-ghost p-1.5" title="Frame anterior">
+            <Icon name="chevron_right" size={13} className="rotate-180" />
+          </button>
+          <button
+            onClick={() => (isPlaying ? pause() : play())}
+            className="w-7 h-7 rounded-full flex items-center justify-center bg-accent text-black hover:bg-accent/90 active:scale-95 transition-all shrink-0"
+          >
+            <Icon name={isPlaying ? "pause" : "play"} size={13} />
+          </button>
+          <button onClick={() => stepForward(1)} className="btn-ghost p-1.5" title="Próximo frame">
+            <Icon name="chevron_right" size={13} />
+          </button>
+          <button onClick={() => seek(duration)} className="btn-ghost p-1.5" title="Final">
+            <Icon name="step-forward" size={13} />
+          </button>
 
-        <div className="mx-1 h-3.5 w-px bg-white/[0.07]" />
+          <div className="mx-1 h-3.5 w-px bg-white/[0.07]" />
 
-        {/* Timecode */}
-        <span className="font-mono text-xs text-white/70 tabular-nums">{formatTimecode(currentTime)}</span>
-        <span className="text-white/20 text-[10px]">/</span>
-        <span className="font-mono text-[10px] text-white/30 tabular-nums">{formatTimecode(duration)}</span>
+          <span className="font-mono text-xs text-white/70 tabular-nums">{formatTimecode(currentTime)}</span>
+          <span className="text-white/20 text-[10px]">/</span>
+          <span className="font-mono text-[10px] text-white/30 tabular-nums">{formatTimecode(duration)}</span>
+        </div>
 
-        <div className="mx-1 h-3.5 w-px bg-white/[0.07]" />
+        {/* Row 2: Trim + Zoom */}
+        <div className="flex items-center gap-1 px-3 pb-1.5">
+          {/* Trim buttons */}
+          <button
+            onClick={() => setTrimPoints(currentTime, outPoint)}
+            className="btn-ghost px-1.5 py-1 text-[10px] text-white/40 hover:text-accent font-mono"
+            title="Marcar entrada aqui (IN)"
+          >
+            [IN
+          </button>
+          <button
+            onClick={() => setTrimPoints(inPoint, currentTime)}
+            className="btn-ghost px-1.5 py-1 text-[10px] text-white/40 hover:text-accent font-mono"
+            title="Marcar saída aqui (OUT)"
+          >
+            OUT]
+          </button>
+          {hasTrim && (
+            <>
+              <span className="text-[9px] text-white/25 font-mono tabular-nums">
+                {inPoint != null && outPoint != null
+                  ? formatTimecode(outPoint - inPoint)
+                  : inPoint != null
+                  ? `>${formatTimecode(inPoint)}`
+                  : `<${formatTimecode(outPoint!)}`}
+              </span>
+              <button
+                onClick={() => setTrimPoints(0, duration)}
+                className="btn-ghost p-1 text-white/25 hover:text-red-400"
+                title="Remover corte (resetar handles)"
+              >
+                <Icon name="x" size={10} />
+              </button>
+            </>
+          )}
 
-        {/* Trim */}
-        <button
-          onClick={() => setTrimPoints(currentTime, outPoint)}
-          className="btn-ghost px-1.5 py-1 text-[10px] text-white/40 hover:text-accent font-mono"
-          title="Marcar entrada aqui (IN)"
-        >
-          [IN
-        </button>
-        <button
-          onClick={() => setTrimPoints(inPoint, currentTime)}
-          className="btn-ghost px-1.5 py-1 text-[10px] text-white/40 hover:text-accent font-mono"
-          title="Marcar saída aqui (OUT)"
-        >
-          OUT]
-        </button>
-        {hasTrim && (
-          <>
-            <span className="text-[9px] text-white/25 font-mono tabular-nums">
-              {inPoint != null && outPoint != null
-                ? formatTimecode(outPoint - inPoint)
-                : inPoint != null
-                ? `>${formatTimecode(inPoint)}`
-                : `<${formatTimecode(outPoint!)}`}
-            </span>
-            <button
-              onClick={() => setTrimPoints(undefined, undefined)}
-              className="btn-ghost p-1 text-white/25 hover:text-red-400"
-              title="Remover corte"
-            >
-              <Icon name="x" size={10} />
+          <div className="flex-1" />
+
+          {/* Zoom */}
+          <div className="flex items-center gap-0.5">
+            <button onClick={() => applyZoom(zoom / 1.5)} className="btn-ghost p-1" title="Zoom out">
+              <Icon name="minus" size={12} />
             </button>
-          </>
-        )}
-
-        <div className="flex-1" />
-
-        {/* Zoom */}
-        <div className="flex items-center gap-0.5">
-          <button onClick={() => applyZoom(zoom / 1.5)} className="btn-ghost p-1" title="Zoom out (scroll ↓ / botão)">
-            <Icon name="minus" size={12} />
-          </button>
-          <span className="text-[10px] text-white/35 tabular-nums font-mono w-7 text-center">{zoomLabel}</span>
-          <button onClick={() => applyZoom(zoom * 1.5)} className="btn-ghost p-1" title="Zoom in (scroll ↑)">
-            <Icon name="plus" size={12} />
-          </button>
+            <span className="text-[10px] text-white/35 tabular-nums font-mono w-7 text-center">{zoomLabel}</span>
+            <button onClick={() => applyZoom(zoom * 1.5)} className="btn-ghost p-1" title="Zoom in">
+              <Icon name="plus" size={12} />
+            </button>
+          </div>
         </div>
       </div>
 
       {/* ── Tracks ── */}
       <div className="flex flex-1 overflow-hidden" ref={tracksRef}>
-        {/* Labels */}
-        <div className="w-24 shrink-0 border-r border-white/[0.07] flex flex-col">
-          <div className="h-5 border-b border-white/[0.07]" />
-          <TrackLabel name="Vídeo" icon="video" />
-          <TrackLabel name="Telemetria" icon="activity" />
-          <TrackLabel name="Widgets" icon="layers" />
+        {/* Left gutter — track header column */}
+        <div className="flex flex-col w-16 shrink-0 border-r border-white/[0.07]">
+          {/* Ruler-height spacer */}
+          <div className="h-8 shrink-0 bg-surface-100 border-b border-white/[0.07]" />
+          {/* Track label */}
+          <div className="flex-1 flex items-center justify-end pr-2.5">
+            <span className="text-[9px] text-white/20 font-medium tracking-wider uppercase select-none">
+              Vídeo
+            </span>
+          </div>
         </div>
 
         {/* Ruler + scrub area */}
@@ -272,43 +299,35 @@ export function TimelinePanel() {
             onMouseDown={handleScrubDown}
             onMouseMove={handleScrubMove}
           >
-            {/* ── Track rows ── */}
-            <div className="flex flex-col h-full pointer-events-none">
-              {/* Video track — segment blocks */}
-              <div className="flex-1 relative border-b border-white/[0.04] overflow-hidden">
-                {segments.length > 0
-                  ? segments.map((seg, i) => {
-                      const l = Math.max(0, timeToFrac(seg.startGlobalTime)) * 100
-                      const r = Math.min(1, timeToFrac(seg.startGlobalTime + seg.duration)) * 100
-                      if (r <= 0 || l >= 100) return null
-                      return (
-                        <div
-                          key={seg.id}
-                          className="absolute top-1 bottom-1 rounded-sm"
-                          style={{ left: `${l}%`, width: `${r - l}%`, background: SEG_COLORS[i % SEG_COLORS.length] }}
-                        />
-                      )
-                    })
-                  : duration > 0 && (
+            {/* ── Video track ── */}
+            <div className="absolute inset-0 pointer-events-none">
+              {segments.length > 0
+                ? segments.map((seg, i) => {
+                    const l = Math.max(0, timeToFrac(seg.startGlobalTime)) * 100
+                    const r = Math.min(1, timeToFrac(seg.startGlobalTime + seg.duration)) * 100
+                    if (r <= 0 || l >= 100) return null
+                    return (
                       <div
-                        className="absolute top-1 bottom-1 left-1 rounded-sm opacity-60"
-                        style={{ width: `calc(${playFrac * 100}% - 4px)`, background: SEG_COLORS[0] }}
-                      />
-                    )}
-              </div>
-
-              {/* Telemetry track */}
-              <div className="flex-1 relative border-b border-white/[0.04] overflow-hidden">
-                {duration > 0 && (
-                  <div
-                    className="absolute top-1 bottom-1 left-0.5 rounded-sm opacity-55"
-                    style={{ width: `calc(${playFrac * 100}%)`, background: "rgba(0,255,136,0.45)" }}
-                  />
-                )}
-              </div>
-
-              {/* Widgets track */}
-              <div className="flex-1 relative border-b border-white/[0.04]" />
+                        key={seg.id}
+                        className="absolute top-2 bottom-2 rounded"
+                        style={{ left: `${l}%`, width: `${r - l}%`, background: SEG_COLORS[i % SEG_COLORS.length] }}
+                      >
+                        {/* File name label inside segment block */}
+                        <span
+                          className="absolute inset-0 flex items-center px-1.5 text-[9px] font-medium text-white/60 overflow-hidden whitespace-nowrap"
+                          style={{ textOverflow: "ellipsis" }}
+                        >
+                          {seg.name}
+                        </span>
+                      </div>
+                    )
+                  })
+                : duration > 0 && (
+                    <div
+                      className="absolute top-2 bottom-2 left-1 rounded opacity-60"
+                      style={{ width: `calc(${playFrac * 100}% - 4px)`, background: SEG_COLORS[0] }}
+                    />
+                  )}
             </div>
 
             {/* ── Segment boundary markers ── */}
@@ -371,15 +390,6 @@ export function TimelinePanel() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function TrackLabel({ name, icon }: { name: string; icon: string }) {
-  return (
-    <div className="flex-1 flex items-center gap-2 px-3 border-b border-white/[0.05]">
-      <Icon name={icon} size={11} className="text-white/30" />
-      <span className="text-[10px] text-white/40 font-medium">{name}</span>
-    </div>
-  )
-}
-
 function TimelineRuler({
   visibleDuration,
   startSec,
@@ -397,17 +407,21 @@ function TimelineRuler({
   for (let t = first; t <= endSec + interval * 0.01; t += interval) {
     const pct = ((t - startSec) / visibleDuration) * 100
     if (pct < -1 || pct > 101) continue
-    const isMajor = Math.round(t / (interval * majorEvery)) * (interval * majorEvery) === Math.round(t * 1000) / 1000
+    const isMajor = Math.round(t / interval) % majorEvery === 0
     ticks.push({ t, pct, isMajor })
   }
 
   return (
-    <div className="h-5 relative bg-surface-100 border-b border-white/[0.07] overflow-hidden select-none">
+    <div className="h-8 relative bg-surface-100 border-b border-white/[0.07] select-none overflow-visible">
       {ticks.map(({ t, pct, isMajor }) => (
-        <div key={t} className="absolute top-0 flex flex-col items-center" style={{ left: `${pct}%` }}>
-          <div className={`w-px ${isMajor ? "h-3 bg-white/20" : "h-1.5 bg-white/10"}`} />
+        <div
+          key={t}
+          className="absolute top-0 flex flex-col items-center"
+          style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
+        >
+          <div className={`w-px ${isMajor ? "h-3 bg-white/35" : "h-2 bg-white/12"}`} />
           {isMajor && (
-            <span className="text-[8px] text-white/30 font-mono mt-0.5 whitespace-nowrap">
+            <span className="text-[9px] text-white/55 font-mono mt-0.5 whitespace-nowrap leading-none">
               {formatTimecode(t)}
             </span>
           )}
@@ -431,7 +445,7 @@ function TrimHandle({
     <div
       className="absolute top-0 bottom-0 z-[15] cursor-ew-resize"
       style={{
-        left: `${frac * 100}%`,
+        left: `clamp(7px, ${frac * 100}%, calc(100% - 7px))`,
         width: 14,
         transform: "translateX(-50%)",
       }}

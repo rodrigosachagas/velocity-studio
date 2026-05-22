@@ -26,58 +26,89 @@ interface ResizeHandleProps {
 export function ResizeHandle({ widgetId, widget, scaleX, scaleY }: ResizeHandleProps) {
   const updateWidget = useProjectStore((s) => s.updateWidget)
   const zoom = useAppStore((s) => s.zoom)
-  const startRef = useRef<{ mouseX: number; mouseY: number; width: number; height: number; x: number; y: number } | null>(null)
 
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent, position: HandlePosition) => {
+  // Refs so the event handler closure always reads the latest values
+  // without recreating callbacks on every render.
+  const zoomRef = useRef(zoom)
+  const scaleXRef = useRef(scaleX)
+  const scaleYRef = useRef(scaleY)
+  const widgetRef = useRef(widget)
+  zoomRef.current = zoom
+  scaleXRef.current = scaleX
+  scaleYRef.current = scaleY
+  widgetRef.current = widget
+
+  const startRef = useRef<{
+    pointerX: number
+    pointerY: number
+    width: number
+    height: number
+    x: number
+    y: number
+  } | null>(null)
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent, position: HandlePosition) => {
       e.preventDefault()
+      // Stop propagation so dnd-kit's pointerdown listener on the parent
+      // motion.div is not triggered — prevents drag activating during resize.
       e.stopPropagation()
 
+      const w = widgetRef.current
       startRef.current = {
-        mouseX: e.clientX,
-        mouseY: e.clientY,
-        width: widget.width,
-        height: widget.height,
-        x: widget.x,
-        y: widget.y,
+        pointerX: e.clientX,
+        pointerY: e.clientY,
+        width: w.width,
+        height: w.height,
+        x: w.x,
+        y: w.y,
       }
 
-      const onMouseMove = (ev: MouseEvent) => {
+      const onPointerMove = (ev: PointerEvent) => {
         if (!startRef.current) return
-        // Mouse delta is in screen pixels. Convert to video pixels:
-        // screen → canvas pixels (÷ zoom) → video pixels (÷ scaleX/Y)
-        const dx = (ev.clientX - startRef.current.mouseX) / zoom / scaleX
-        const dy = (ev.clientY - startRef.current.mouseY) / zoom / scaleY
+        const sx = scaleXRef.current
+        const sy = scaleYRef.current
+        const z = zoomRef.current
 
-        // Minimum size in video pixels (~40px at reference 1920 width)
-        const minSize = 40 / scaleX
+        // Pointer delta is in screen pixels.
+        // ÷ zoom  → canvas CSS pixels (undoing the CSS scale on the canvas div)
+        // ÷ scaleX → video pixels (canvas display pixels per video pixel)
+        const dx = (ev.clientX - startRef.current.pointerX) / z / sx
+        const dy = (ev.clientY - startRef.current.pointerY) / z / sy
+
+        const minW = 40 / sx
+        const minH = 40 / sy
 
         const updates: Partial<WidgetConfig> = {}
 
-        if (position.includes("e")) updates.width = Math.max(minSize, startRef.current.width + dx)
-        if (position.includes("s")) updates.height = Math.max(minSize, startRef.current.height + dy)
+        if (position.includes("e")) {
+          updates.width = Math.max(minW, startRef.current.width + dx)
+        }
+        if (position.includes("s")) {
+          updates.height = Math.max(minH, startRef.current.height + dy)
+        }
         if (position.includes("w")) {
-          updates.width = Math.max(minSize, startRef.current.width - dx)
-          updates.x = startRef.current.x + startRef.current.width - (updates.width ?? widget.width)
+          updates.width = Math.max(minW, startRef.current.width - dx)
+          updates.x = startRef.current.x + startRef.current.width - updates.width
         }
         if (position.includes("n")) {
-          updates.height = Math.max(minSize, startRef.current.height - dy)
-          updates.y = startRef.current.y + startRef.current.height - (updates.height ?? widget.height)
+          updates.height = Math.max(minH, startRef.current.height - dy)
+          updates.y = startRef.current.y + startRef.current.height - updates.height
         }
 
         updateWidget(widgetId, updates)
       }
 
-      const onMouseUp = () => {
+      const onPointerUp = () => {
         startRef.current = null
-        window.removeEventListener("mousemove", onMouseMove)
-        window.removeEventListener("mouseup", onMouseUp)
+        window.removeEventListener("pointermove", onPointerMove)
+        window.removeEventListener("pointerup", onPointerUp)
       }
 
-      window.addEventListener("mousemove", onMouseMove)
-      window.addEventListener("mouseup", onMouseUp)
+      window.addEventListener("pointermove", onPointerMove)
+      window.addEventListener("pointerup", onPointerUp)
     },
-    [widget, widgetId, updateWidget]
+    [widgetId, updateWidget],
   )
 
   const handles: HandlePosition[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"]
@@ -95,15 +126,29 @@ export function ResizeHandle({ widgetId, widget, scaleX, scaleY }: ResizeHandleP
           borderRadius: 2,
           cursor: HANDLE_CURSORS[pos],
           zIndex: 10000,
-          ...(pos.includes("n") ? { top: -4 } : pos.includes("s") ? { bottom: -4 } : { top: "50%", transform: "translateY(-50%)" }),
-          ...(pos.includes("w") ? { left: -4 } : pos.includes("e") ? { right: -4 } : { left: "50%", transform: pos.includes("n") || pos.includes("s") ? "translateX(-50%)" : "translateY(-50%)" }),
+          ...(pos.includes("n")
+            ? { top: -4 }
+            : pos.includes("s")
+              ? { bottom: -4 }
+              : { top: "50%", transform: "translateY(-50%)" }),
+          ...(pos.includes("w")
+            ? { left: -4 }
+            : pos.includes("e")
+              ? { right: -4 }
+              : {
+                  left: "50%",
+                  transform:
+                    pos.includes("n") || pos.includes("s")
+                      ? "translateX(-50%)"
+                      : "translateY(-50%)",
+                }),
         }
 
         return (
           <div
             key={pos}
             style={style}
-            onMouseDown={(e) => onMouseDown(e, pos)}
+            onPointerDown={(e) => onPointerDown(e, pos)}
           />
         )
       })}

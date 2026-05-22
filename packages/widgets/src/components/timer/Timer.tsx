@@ -1,4 +1,5 @@
 import { formatTimecode } from "@velocity/shared"
+import { useExportMode } from "../../contexts/ExportModeContext"
 
 interface TimerProps {
   currentTime?: number
@@ -17,6 +18,7 @@ export function Timer({
   height = 48,
   showMs = true,
 }: TimerProps) {
+  const isExport = useExportMode()
   const bg =
     theme === "glass"
       ? "rgba(255,255,255,0.1)"
@@ -41,7 +43,7 @@ export function Timer({
         background: bg,
         borderRadius: 10,
         border: "1px solid rgba(255,255,255,0.08)",
-        backdropFilter: "blur(12px)",
+        backdropFilter: isExport ? undefined : "blur(12px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",

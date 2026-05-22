@@ -5,7 +5,7 @@ import { Altitude } from "../components/altitude/Altitude"
 import { GForce } from "../components/g-force/GForce"
 import { Timer } from "../components/timer/Timer"
 import { CircuitMap } from "../components/circuit-map/CircuitMap"
-import { LapTimer } from "../components/lap-timer/LapTimer"
+import { LapTimer, lapTimerIdealHeight } from "../components/lap-timer/LapTimer"
 
 export function registerDefaultWidgets(): void {
   // Register each speedometer variant as a distinct widget entry
@@ -112,12 +112,12 @@ export function registerDefaultWidgets(): void {
       type: "lap-timer",
       label: "Cronômetro de Volta",
       description: "Número de voltas e tempo por volta com base na largada marcada no mapa",
-      defaultSize: { width: 240, height: 122 },
+      defaultSize: { width: 240, height: lapTimerIdealHeight(10, 240) },
       defaultConfig: {
         width: 240,
-        height: 122,
+        height: lapTimerIdealHeight(10, 240),
         style: { theme: "dark", accentColor: "#00ff88" },
-        props: { historyCount: 3 },
+        props: { historyCount: 10 },
       },
       icon: "flag",
       category: "timing",

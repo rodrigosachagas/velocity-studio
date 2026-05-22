@@ -12,6 +12,12 @@ registerDefaultWidgets()
 export function App() {
   const view = useAppStore((s) => s.view)
   const createProject = useProjectStore((s) => s.createProject)
+  const project = useProjectStore((s) => s.project)
+
+  // Auto-create a project on first load so the editor is ready immediately.
+  useEffect(() => {
+    if (!project) createProject()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // keyboard shortcuts

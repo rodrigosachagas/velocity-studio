@@ -52,7 +52,7 @@ export function Compass({
         background: bg,
         borderRadius: "50%",
         border: "1px solid rgba(255,255,255,0.08)",
-        backdropFilter: "blur(12px)",
+        backdropFilter: isExport ? undefined : "blur(12px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",

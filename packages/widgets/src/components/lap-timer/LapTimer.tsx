@@ -21,6 +21,66 @@ interface LapTimerProps {
 
 const MONO = "ui-monospace,'Cascadia Code',monospace"
 const DANGER = "#ff6666"
+const N_LIGHTS = 5
+
+function LightRow({ s, color, glow }: { s: number; color: string; glow: string }) {
+  const r = Math.round(7 * s)
+  const gap = Math.round(6 * s)
+  return (
+    <div style={{ display: "flex", gap, alignItems: "center" }}>
+      {Array.from({ length: N_LIGHTS }, (_, i) => (
+        <div
+          key={i}
+          style={{
+            width: r * 2,
+            height: r * 2,
+            borderRadius: "50%",
+            background: color,
+            boxShadow: `0 0 ${Math.round(6 * s)}px ${glow}`,
+            border: `1px solid rgba(255,255,255,0.12)`,
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function StartLights({ s }: { s: number }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: Math.round(8 * s), flex: 1 }}>
+      <LightRow
+        s={s}
+        color="radial-gradient(circle at 35% 35%, #ff3a3a, #8b0000)"
+        glow="#ff000077"
+      />
+      <span style={{ fontSize: Math.round(7 * s), letterSpacing: "0.15em", color: "rgba(255,255,255,0.22)", fontFamily: MONO }}>
+        AGUARDANDO
+      </span>
+    </div>
+  )
+}
+
+function GreenLights({ s, accentColor }: { s: number; accentColor: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: Math.round(8 * s), flex: 1 }}>
+      <LightRow
+        s={s}
+        color={`radial-gradient(circle at 35% 35%, ${accentColor}, #006622)`}
+        glow={`${accentColor}99`}
+      />
+      <span style={{ fontSize: Math.round(7 * s), letterSpacing: "0.15em", color: accentColor, fontFamily: MONO }}>
+        GO
+      </span>
+    </div>
+  )
+}
+
+/** Returns the ideal widget height in px for a given historyCount and width. */
+export function lapTimerIdealHeight(historyCount: number, width: number): number {
+  const s = width / 240
+  const n = Math.min(30, Math.max(0, Math.round(historyCount)))
+  return Math.round((n > 0 ? 68 + n * 18 : 62) * s)
+}
 
 export function LapTimer({
   frames,
@@ -33,7 +93,7 @@ export function LapTimer({
   historyCount = 0,
 }: LapTimerProps) {
   const s = width / 240
-  const clampedHistory = Math.min(10, Math.max(0, Math.round(historyCount)))
+  const clampedHistory = Math.min(30, Math.max(0, Math.round(historyCount)))
 
   const bg =
     theme === "glass" ? "rgba(0,0,0,0.45)" :
@@ -105,6 +165,9 @@ export function LapTimer({
         <div style={{ textAlign: "center", fontSize: Math.round(10 * s), color: muted, letterSpacing: "0.1em" }}>
           DEFINA A LARGADA NO MAPA
         </div>
+      ) : lapState && lapState.lapNumber === 1 && lapState.elapsedMs < 1500 ? (
+        /* Green lights — brief flash on the very first crossing (~1.5s) */
+        <GreenLights s={s} accentColor={accentColor} />
       ) : lapState && lapState.lapNumber > 0 ? (
         <>
           {/* Main row: lap number + current elapsed */}
@@ -156,16 +219,7 @@ export function LapTimer({
           )}
         </>
       ) : (
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: Math.round(9 * s), color: muted, letterSpacing: "0.15em", marginBottom: Math.round(4 * s) }}>
-            AGUARDANDO LARGADA
-          </div>
-          {session && session.laps.length > 0 && (
-            <div style={{ fontSize: Math.round(9 * s), color: `${accentColor}80` }}>
-              {session.laps.length} volta{session.laps.length !== 1 ? "s" : ""} detectada{session.laps.length !== 1 ? "s" : ""}
-            </div>
-          )}
-        </div>
+        <StartLights s={s} />
       )}
     </div>
   )

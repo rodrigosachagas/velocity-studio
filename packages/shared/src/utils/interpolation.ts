@@ -110,6 +110,33 @@ export function smoothTelemetry(
   })
 }
 
+export function smoothGPSPositions(
+  frames: TelemetryFrame[],
+  windowSize = 15,
+): TelemetryFrame[] {
+  if (frames.length < 3) return frames
+
+  return frames.map((frame, i) => {
+    if (frame.latitude === undefined && frame.longitude === undefined) return frame
+
+    const half = Math.floor(windowSize / 2)
+    const start = Math.max(0, i - half)
+    const end = Math.min(frames.length - 1, i + half)
+    const win = frames.slice(start, end + 1)
+
+    const lats = win.filter((f) => f.latitude !== undefined).map((f) => f.latitude!)
+    const lons = win.filter((f) => f.longitude !== undefined).map((f) => f.longitude!)
+
+    if (lats.length === 0) return frame
+
+    return {
+      ...frame,
+      latitude: lats.reduce((a, b) => a + b, 0) / lats.length,
+      longitude: lons.reduce((a, b) => a + b, 0) / lons.length,
+    }
+  })
+}
+
 export function resampleTelemetry(
   frames: TelemetryFrame[],
   targetFps: number

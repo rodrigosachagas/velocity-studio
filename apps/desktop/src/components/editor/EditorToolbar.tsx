@@ -24,7 +24,7 @@ export function EditorToolbar({ onExport }: EditorToolbarProps) {
             <Icon name="video" size={13} />
             <span className="max-w-[120px] truncate">{project.video.name}</span>
             <span className="text-white/30">
-              {project.video.fps}fps · {project.video.width}×{project.video.height}
+              {Math.round(project.video.fps)}fps · {project.video.width}×{project.video.height}
             </span>
           </div>
         ) : (

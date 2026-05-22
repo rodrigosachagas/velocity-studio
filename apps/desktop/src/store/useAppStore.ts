@@ -33,7 +33,7 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  view: "welcome",
+  view: "editor",
   activePanel: "widgets",
   isRendering: false,
   renderProgress: 0,

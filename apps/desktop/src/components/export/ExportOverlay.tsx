@@ -1,4 +1,4 @@
-import { forwardRef } from "react"
+import { forwardRef, useMemo } from "react"
 import { ExportModeProvider, getWidget } from "@velocity/widgets"
 import { interpolateTelemetryAt } from "@velocity/shared"
 import type { WidgetConfig, TelemetryTrack } from "@velocity/shared"
@@ -10,12 +10,26 @@ interface ExportOverlayProps {
   videoWidth: number
   videoHeight: number
   startFinishLine?: { lat: number; lon: number }
+  /** Trim window — only frames within [inPoint, outPoint] seconds are passed to widgets */
+  inPoint?: number
+  outPoint?: number
 }
 
 export const ExportOverlay = forwardRef<HTMLDivElement, ExportOverlayProps>(
-  ({ widgets, telemetry, currentTime, videoWidth, videoHeight, startFinishLine }, ref) => {
-    const frame = telemetry
-      ? interpolateTelemetryAt(telemetry.frames, currentTime * 1000)
+  ({ widgets, telemetry, currentTime, videoWidth, videoHeight, startFinishLine, inPoint, outPoint }, ref) => {
+    // Mirror the same trim-filter that WidgetCanvas applies so widgets like LapTimer
+    // only see GPS crossings that fall within the exported segment.
+    const trimmedFrames = useMemo(() => {
+      const all = telemetry?.frames
+      if (!all) return undefined
+      if (inPoint == null && outPoint == null) return all
+      const startMs = (inPoint ?? 0) * 1000
+      const endMs = (outPoint ?? Infinity) * 1000
+      return all.filter((f) => f.timestamp >= startMs && f.timestamp <= endMs)
+    }, [telemetry?.frames, inPoint, outPoint])
+
+    const frame = trimmedFrames
+      ? interpolateTelemetryAt(trimmedFrames, currentTime * 1000)
       : null
 
     return (
@@ -57,7 +71,7 @@ export const ExportOverlay = forwardRef<HTMLDivElement, ExportOverlayProps>(
                 heading: frame?.heading,
                 gForce: frame?.gForce,
                 acceleration: frame?.acceleration,
-                frames: telemetry?.frames,
+                frames: trimmedFrames,
                 currentTime,
                 startFinishLine,
                 ...props,

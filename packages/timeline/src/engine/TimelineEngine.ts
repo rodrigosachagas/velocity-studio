@@ -6,6 +6,7 @@ export type TimelineEngineEvent =
   | { type: "playbackStart" }
   | { type: "playbackStop" }
   | { type: "seek"; time: number }
+  | { type: "seekVersion"; version: number }
   | { type: "frameUpdate"; frame: number; fps: number }
 
 type EventListener<T extends TimelineEngineEvent["type"]> = (
@@ -17,6 +18,7 @@ export class TimelineEngine {
   private rafId: number | null = null
   private lastTimestamp: number | null = null
   private listeners = new Map<string, Set<EventListener<TimelineEngineEvent["type"]>>>()
+  private _seekVersion = 0
   private fps: number
 
   constructor(initialState: Partial<TimelineState> = {}, fps = 30) {
@@ -62,6 +64,15 @@ export class TimelineEngine {
     this.emit({ type: "playbackStart" })
   }
 
+  /**
+   * Sync the engine's internal clock to an externally-known position without
+   * emitting seek events. Used before play() so the engine's end-of-playback
+   * detection stays accurate when the video is the master clock.
+   */
+  syncTime(time: number): void {
+    this.state = { ...this.state, currentTime: Math.max(0, Math.min(time, this.state.duration)) }
+  }
+
   pause(): void {
     if (!this.state.isPlaying) return
     if (this.rafId !== null) {
@@ -80,6 +91,8 @@ export class TimelineEngine {
   seek(time: number): void {
     const clamped = Math.max(0, Math.min(time, this.state.duration))
     this.state = { ...this.state, currentTime: clamped }
+    this._seekVersion++
+    this.emit({ type: "seekVersion", version: this._seekVersion })
     this.emit({ type: "seek", time: clamped })
     this.emit({ type: "timeUpdate", time: clamped })
     this.emit({ type: "frameUpdate", frame: this.timeToFrame(clamped), fps: this.fps })
@@ -182,18 +195,16 @@ export class TimelineEngine {
 
         if (nextTime >= this.state.duration) {
           this.state = { ...this.state, currentTime: this.state.duration, isPlaying: false }
-          this.emit({ type: "timeUpdate", time: this.state.duration })
+          // No timeUpdate — VideoPreview's RAF is the master clock during playback.
+          // The video reaching its end (onEnded) handles the visual stop; we just
+          // stop ticking so the engine is ready for the next play() call.
           this.emit({ type: "playbackStop" })
           return
         }
 
+        // Advance internal time for end-detection, but do NOT emit timeUpdate.
+        // reportPlaybackTime() from VideoPreview drives useTimelineStore.currentTime.
         this.state = { ...this.state, currentTime: nextTime }
-        this.emit({ type: "timeUpdate", time: nextTime })
-        this.emit({
-          type: "frameUpdate",
-          frame: this.timeToFrame(nextTime),
-          fps: this.fps,
-        })
       }
 
       this.lastTimestamp = timestamp

@@ -1,5 +1,5 @@
 import type { TelemetryFrame, TelemetryTrack } from "@velocity/shared"
-import { smoothTelemetry, resampleTelemetry } from "@velocity/shared"
+import { smoothTelemetry, resampleTelemetry, smoothGPSPositions } from "@velocity/shared"
 
 export interface NormalizeOptions {
   smooth?: boolean
@@ -13,6 +13,10 @@ export interface NormalizeOptions {
   maxAccelMs2?: number
   /** Zero out speeds below this threshold (GPS drift) — default 0.3 m/s (~1 kph) */
   lowSpeedThresholdMs?: number
+  /** Smooth GPS lat/lon positions to reduce measurement noise — default true */
+  gpsSmooth?: boolean
+  /** Averaging window for GPS smoothing (samples, post-resample) — default 15 (~500ms at 30fps) */
+  gpsSmoothWindow?: number
 }
 
 export function normalizeTelemetry(
@@ -28,6 +32,8 @@ export function normalizeTelemetry(
     maxSpeedMs = 100,
     maxAccelMs2 = 20,
     lowSpeedThresholdMs = 0.3,
+    gpsSmooth = true,
+    gpsSmoothWindow = 15,
   } = options
 
   let frames = track.frames
@@ -49,6 +55,12 @@ export function normalizeTelemetry(
 
   if (resample) {
     frames = resampleTelemetry(frames, targetFps)
+  }
+
+  // GPS positional smoothing runs after resample so the window operates in
+  // uniform time-space (30fps) rather than the raw 10–18Hz GPMF rate.
+  if (gpsSmooth) {
+    frames = smoothGPSPositions(frames, gpsSmoothWindow)
   }
 
   const first = frames[0]
