@@ -65,10 +65,26 @@ const defaultTimeline = () => ({
   snapThreshold: 0.1,
 })
 
+/** Read the last saved project from localStorage synchronously at store init time.
+ *  This ensures the project is available before the first React render, avoiding
+ *  a flash of empty state that would occur with an async restore. */
+function getInitialProject(): Project | null {
+  try {
+    const lastId = localStorage.getItem("velocity_last_project_id")
+    if (!lastId) return null
+    const raw = localStorage.getItem(`velocity_project_${lastId}`)
+    if (!raw) return null
+    const p = JSON.parse(raw) as Project
+    return p?.id ? p : null
+  } catch {
+    return null
+  }
+}
+
 export const useProjectStore = create<ProjectStore>()(
   devtools(
     subscribeWithSelector((set, get) => ({
-      project: null,
+      project: getInitialProject(),
       videoBlobUrl: null,
       isDirty: false,
       selectedWidgetIds: [],
@@ -95,7 +111,16 @@ export const useProjectStore = create<ProjectStore>()(
         if (!project) return
         const updated = { ...project, updatedAt: new Date().toISOString() }
         set({ project: updated, isDirty: false })
-        localStorage.setItem(`velocity_project_${project.id}`, JSON.stringify(updated))
+        // Strip telemetry frames before persisting — they can be 5-10 MB and exceed
+        // localStorage limits. Re-extracted automatically on session restore.
+        const toSave = {
+          ...updated,
+          telemetry: updated.telemetry
+            ? { ...updated.telemetry, frames: [] }
+            : undefined,
+        }
+        localStorage.setItem(`velocity_project_${project.id}`, JSON.stringify(toSave))
+        localStorage.setItem("velocity_last_project_id", project.id)
       },
 
       setVideo: (video) => {

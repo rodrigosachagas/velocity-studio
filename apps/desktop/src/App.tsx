@@ -6,6 +6,8 @@ import { WelcomeScreen } from "./pages/WelcomeScreen"
 import { EditorScreen } from "./pages/EditorScreen"
 import { TitleBar } from "./components/ui/TitleBar"
 import { registerDefaultWidgets } from "@velocity/widgets"
+import { useAutoSave } from "./hooks/useAutoSave"
+import { useSessionRestore } from "./hooks/useSessionRestore"
 
 registerDefaultWidgets()
 
@@ -13,6 +15,9 @@ export function App() {
   const view = useAppStore((s) => s.view)
   const createProject = useProjectStore((s) => s.createProject)
   const project = useProjectStore((s) => s.project)
+
+  useAutoSave()
+  useSessionRestore()
 
   // Auto-create a project on first load so the editor is ready immediately.
   useEffect(() => {

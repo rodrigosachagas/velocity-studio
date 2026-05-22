@@ -57,6 +57,7 @@ struct PipeState {
 
 static PIPE_STATE: std::sync::OnceLock<Arc<tokio::sync::Mutex<Option<PipeState>>>> =
     std::sync::OnceLock::new();
+static FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn get_pipe_state() -> &'static Arc<tokio::sync::Mutex<Option<PipeState>>> {
     PIPE_STATE.get_or_init(|| Arc::new(tokio::sync::Mutex::new(None)))
@@ -296,6 +297,8 @@ pub async fn start_pipe_export(options: PipeExportOptions) -> Result<(), String>
         buf
     });
 
+    FRAME_COUNTER.store(0, std::sync::atomic::Ordering::Relaxed);
+
     *get_pipe_state().lock().await = Some(PipeState {
         stdin,
         child,
@@ -321,6 +324,16 @@ pub async fn pipe_frame_base64(data: String) -> Result<(), String> {
             .write_all(&bytes)
             .await
             .map_err(|e| format!("FFmpeg stdin write failed: {e}"))?;
+
+        let n = FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n % 500 == 0 {
+            eprintln!("[export] piped frame {n}");
+        }
+        // Always update last-frame file so we know where it stopped on crash
+        let _ = std::fs::write(
+            "/tmp/velocity_last_frame.txt",
+            format!("last_frame={n}\nbytes={}\n", bytes.len()),
+        );
     }
     Ok(())
 }
@@ -461,6 +474,71 @@ pub async fn render_video(
 
     app.emit("export:complete", &options.output_path).map_err(|e| e.to_string())?;
     Ok(options.output_path)
+}
+
+/// Write a JS-side debug status string to /tmp — used to pinpoint crashes in the JS export loop.
+#[tauri::command]
+pub async fn write_debug_status(status: String) -> Result<(), String> {
+    eprintln!("[export-js] {status}");
+    std::fs::write("/tmp/velocity_js_crash.txt", &status)
+        .map_err(|e| format!("write failed: {e}"))
+}
+
+/// Concatenate a list of chunk video files into a single output using FFmpeg stream copy.
+/// Deletes the chunk files after a successful concat.
+#[tauri::command]
+pub async fn concat_videos(chunk_paths: Vec<String>, output_path: String) -> Result<(), String> {
+    use std::io::Write;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let list_path = format!("{}/velocity_concat_{}.txt", std::env::temp_dir().display(), ts);
+
+    {
+        let mut f = std::fs::File::create(&list_path)
+            .map_err(|e| format!("Failed to create concat list: {e}"))?;
+        for p in &chunk_paths {
+            writeln!(f, "file '{}'", p.replace('\'', "'\\''"))
+                .map_err(|e| format!("Failed to write concat list: {e}"))?;
+        }
+    }
+
+    let faststart = output_path.ends_with(".mp4");
+    let mut args = vec![
+        "-y".to_string(),
+        "-f".to_string(), "concat".to_string(),
+        "-safe".to_string(), "0".to_string(),
+        "-i".to_string(), list_path.clone(),
+        "-c".to_string(), "copy".to_string(),
+    ];
+    if faststart {
+        args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+    }
+    args.push(output_path.clone());
+
+    let output = tokio::process::Command::new("ffmpeg")
+        .args(&args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run ffmpeg concat: {e}"))?;
+
+    let _ = std::fs::remove_file(&list_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("FFmpeg concat failed:\n{stderr}"));
+    }
+
+    for p in &chunk_paths {
+        let _ = std::fs::remove_file(p);
+    }
+
+    eprintln!("[export] concat complete → {output_path}");
+    Ok(())
 }
 
 #[tauri::command]

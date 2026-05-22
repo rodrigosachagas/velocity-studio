@@ -4,6 +4,13 @@ use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
 pub fn run() {
+    // Write panic info to a temp file so crashes are diagnosable even without a terminal
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("PANIC: {}\n", info);
+        eprintln!("{}", msg);
+        let _ = std::fs::write("/tmp/velocity_crash.log", &msg);
+    }));
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -30,6 +37,8 @@ pub fn run() {
             commands::export::finish_pipe_export,
             commands::export::render_video,
             commands::export::cancel_render,
+            commands::export::write_debug_status,
+            commands::export::concat_videos,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

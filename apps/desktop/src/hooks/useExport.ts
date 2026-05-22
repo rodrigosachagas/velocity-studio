@@ -33,6 +33,16 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(str)
 }
 
+/**
+ * The WebContent process (WKWebView) is killed silently after ~19,500
+ * html-to-image frame captures — WebKit accumulates getComputedStyle state
+ * at the process level. We cap total frames at 15,000 (25% safety margin)
+ * by reducing overlay FPS for long videos.
+ */
+const MAX_SAFE_FRAMES = 15_000
+const IDEAL_OVERLAY_FPS = 15
+const MIN_OVERLAY_FPS = 5
+
 export function useExport() {
   const [state, setState] = useState<ExportState>({
     phase: "idle",
@@ -90,6 +100,24 @@ export function useExport() {
     log(`Starting export — codec=${options.codec} crf=${options.crf} res=${options.videoWidth}x${options.videoHeight} fps=${options.fps}`)
     log(`Segments=${isMultiSeg ? options.segmentPaths!.length : 1} duration=${options.duration.toFixed(2)}s`)
 
+    // Global JS crash detectors — write to Rust before process dies
+    const onUncaughtError = (e: ErrorEvent) => {
+      const msg = `UNCAUGHT ERROR at frame ~${logsRef.current.length}: ${e.message} @ ${e.filename}:${e.lineno}`
+      log(msg)
+      import("@tauri-apps/api/core").then(({ invoke: inv }) =>
+        inv("write_debug_status", { status: msg }).catch(() => {})
+      )
+    }
+    const onUnhandledRejection = (e: PromiseRejectionEvent) => {
+      const msg = `UNHANDLED REJECTION at frame ~${logsRef.current.length}: ${e.reason}`
+      log(msg)
+      import("@tauri-apps/api/core").then(({ invoke: inv }) =>
+        inv("write_debug_status", { status: msg }).catch(() => {})
+      )
+    }
+    window.addEventListener("error", onUncaughtError)
+    window.addEventListener("unhandledrejection", onUnhandledRejection)
+
     // Screen wake lock — keeps display on so requestAnimationFrame keeps firing
     let wakeLock: WakeLockSentinel | null = null
     try {
@@ -126,10 +154,16 @@ export function useExport() {
         ? Math.min(trimmedDuration, options.maxDuration)
         : trimmedDuration
 
-      const OVERLAY_FPS = 15
+      // Adaptive overlay FPS — reduces automatically for long videos so the total
+      // frame count stays under MAX_SAFE_FRAMES. WebKit's getComputedStyle state
+      // accumulates at process level and causes a silent crash around 19,500 captures.
+      const OVERLAY_FPS = Math.max(
+        MIN_OVERLAY_FPS,
+        Math.min(IDEAL_OVERLAY_FPS, Math.floor(MAX_SAFE_FRAMES / effectiveDuration))
+      )
       const totalFrames = Math.ceil(effectiveDuration * OVERLAY_FPS)
 
-      log(`Total frames=${totalFrames} overlayFps=${OVERLAY_FPS} trimStart=${trimStart.toFixed(2)} effectiveDuration=${effectiveDuration.toFixed(2)}`)
+      log(`overlayFps=${OVERLAY_FPS}${OVERLAY_FPS < IDEAL_OVERLAY_FPS ? ` (reduced from ${IDEAL_OVERLAY_FPS} — video too long for full fps)` : ""} totalFrames=${totalFrames} trimStart=${trimStart.toFixed(2)} effectiveDuration=${effectiveDuration.toFixed(2)}`)
 
       setState({ phase: "rendering", currentFrame: 0, totalFrames, progress: 0, outputPath, error: null, logs: [] })
 
@@ -180,8 +214,17 @@ export function useExport() {
         }
 
         const time = trimStart + i / OVERLAY_FPS
-        flushSync(() => setOverlayTime(time))
-        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+        const t0 = performance.now()
+        try {
+          flushSync(() => setOverlayTime(time))
+        } catch (flushErr) {
+          log(`Frame ${i} FATAL flushSync threw: ${flushErr}`)
+          throw flushErr
+        }
+        const tFlush = performance.now() - t0
+        if (tFlush > 200) log(`Frame ${i} SLOW flushSync: ${tFlush.toFixed(0)}ms`)
+
+        await new Promise<void>((r) => setTimeout(r, 0))
 
         if (!overlayRef.current) {
           log(`Frame ${i}: overlayRef is null, skipping`)
@@ -190,16 +233,27 @@ export function useExport() {
         }
 
         let bytes: Uint8Array | null = null
+        const CANVAS_TIMEOUT_MS = 8_000
+        let canvasTimedOut = false
         try {
-          const canvas = await toCanvas(overlayRef.current, {
-            backgroundColor: undefined,
-            pixelRatio: 1,
-            width: options.videoWidth,
-            height: options.videoHeight,
-            fontEmbedCSS,
-          })
+          const t1 = performance.now()
+          const canvas = await Promise.race([
+            toCanvas(overlayRef.current, {
+              backgroundColor: undefined,
+              pixelRatio: 1,
+              width: options.videoWidth,
+              height: options.videoHeight,
+              fontEmbedCSS,
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => { canvasTimedOut = true; reject(new Error("timeout")) }, CANVAS_TIMEOUT_MS)
+            ),
+          ])
+          const tCanvas = performance.now() - t1
+          if (tCanvas > 500) log(`Frame ${i} SLOW toCanvas: ${tCanvas.toFixed(0)}ms`)
+
           const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"))
-          canvas.width = 0  // free canvas backing store (~30 MB for 4K)
+          canvas.width = 0  // free canvas backing store
           if (blob) {
             bytes = new Uint8Array(await blob.arrayBuffer())
             lastBytes = bytes
@@ -208,7 +262,9 @@ export function useExport() {
             captureFailures++
           }
         } catch (frameErr) {
-          const msg = `Frame ${i}: toCanvas failed — ${frameErr}`
+          const msg = canvasTimedOut
+            ? `Frame ${i}: toCanvas timeout after ${CANVAS_TIMEOUT_MS}ms — using last frame`
+            : `Frame ${i}: toCanvas failed — ${frameErr}`
           console.warn(msg)
           log(msg)
           captureFailures++
@@ -224,7 +280,10 @@ export function useExport() {
 
         // Send frame bytes directly to Rust via base64 IPC — zero disk writes
         const b64 = toBase64(frameData)
+        const t3 = performance.now()
         await invoke("pipe_frame_base64", { data: b64 })
+        const tPipe = performance.now() - t3
+        if (tPipe > 500) log(`Frame ${i} SLOW pipe_frame_base64: ${tPipe.toFixed(0)}ms`)
 
         setState((s) => ({
           ...s,
@@ -232,8 +291,11 @@ export function useExport() {
           progress: ((i + 1) / totalFrames) * 0.95,
         }))
 
-        // GC yield every 50 frames
-        if (i % 50 === 49) await new Promise<void>((r) => setTimeout(r, 30))
+        // GC yield every 10 frames — html-to-image accumulates blob URLs / SVG blobs
+        // internally and may not revoke them; more frequent yields let WebKit GC keep up.
+        if (i % 10 === 9) await new Promise<void>((r) => setTimeout(r, 100))
+
+        if (i % 500 === 499) log(`Heartbeat frame=${i + 1}/${totalFrames} failures=${captureFailures} fallbacks=${captureFallbacks}`)
       }
 
       log(`Frame loop done — success=${totalFrames - captureFailures - captureSkips} failures=${captureFailures} fallbacks=${captureFallbacks} skips=${captureSkips}`)
@@ -264,6 +326,8 @@ export function useExport() {
       }))
     } finally {
       releaseWakeLock()
+      window.removeEventListener("error", onUncaughtError)
+      window.removeEventListener("unhandledrejection", onUnhandledRejection)
     }
   }
 
